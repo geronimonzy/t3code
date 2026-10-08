@@ -1430,10 +1430,10 @@ export function AppearanceSettingsPanel() {
           {...searchableSetting("subagent-mascots")}
           description="Show running subagents above the composer as tiny pixel Claudes."
           resetAction={
-            subagentMascots ? (
+            !subagentMascots ? (
               <SettingResetButton
                 label="subagent mascots"
-                onClick={() => setSubagentMascots(false)}
+                onClick={() => setSubagentMascots(true)}
               />
             ) : null
           }

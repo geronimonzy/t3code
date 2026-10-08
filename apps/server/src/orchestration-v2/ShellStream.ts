@@ -70,16 +70,29 @@ export type ShellApplicationEvent =
       readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId">;
     };
 
-/** Shell updates refetch an aggregate; drop transcript bodies before retaining an event. */
+/**
+ * Shell updates refetch an aggregate; drop transcript bodies before retaining an event.
+ *
+ * A subagent update refetches the subagent's child thread instead of the
+ * parent: the child shell's `subagentStatus` mirrors the record, while the
+ * parent shell does not read subagent records (only its `updatedAt` moves,
+ * which unchanged-shell suppression ignores anyway). Refreshing both would
+ * need two deltas at one sequence, and clients drop the second.
+ */
 export function toShellApplicationEvent(stored: ApplicationStoredEvent): ShellApplicationEvent {
-  return "aggregateKind" in stored
-    ? {
-        aggregateKind: stored.aggregateKind,
-        aggregateId: stored.aggregateId,
-        type: stored.type,
-        sequence: stored.sequence,
-      }
-    : { sequence: stored.sequence, event: { threadId: stored.event.threadId } };
+  if ("aggregateKind" in stored) {
+    return {
+      aggregateKind: stored.aggregateKind,
+      aggregateId: stored.aggregateId,
+      type: stored.type,
+      sequence: stored.sequence,
+    };
+  }
+  const threadId =
+    stored.event.type === "subagent.updated" && stored.event.payload.childThreadId !== null
+      ? stored.event.payload.childThreadId
+      : stored.event.threadId;
+  return { sequence: stored.sequence, event: { threadId } };
 }
 
 /** Keep only the newest shell-relevant event per project/thread aggregate. */

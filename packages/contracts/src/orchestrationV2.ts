@@ -660,6 +660,18 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
 });
 export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.Type;
 
+export const OrchestrationV2SubagentStatus = Schema.Literals([
+  "idle",
+  "pending",
+  "running",
+  "waiting",
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+export type OrchestrationV2SubagentStatus = typeof OrchestrationV2SubagentStatus.Type;
+
 export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
@@ -683,16 +695,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
   // blocking tool call). Absent on legacy records; treated as settled_only.
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
-  status: Schema.Literals([
-    "idle",
-    "pending",
-    "running",
-    "waiting",
-    "completed",
-    "failed",
-    "cancelled",
-    "interrupted",
-  ]),
+  status: OrchestrationV2SubagentStatus,
   progress: Schema.optional(Schema.String),
   result: Schema.NullOr(Schema.String),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1867,6 +1870,12 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
     Schema.NullOr(Schema.Literals(["preparing", "starting", "running", "waiting"])),
   ),
   status: OrchestrationV2ShellThreadStatus,
+  /**
+   * Set only on a subagent's child thread: mirrors the status of the parent
+   * thread's subagent record, since the child itself has no runs. Omitted on
+   * other threads and by servers that predate it.
+   */
+  subagentStatus: Schema.optional(OrchestrationV2SubagentStatus),
   lastError: Schema.optional(Schema.NullOr(Schema.String)),
   lastErrorClass: Schema.optional(Schema.NullOr(OrchestrationV2ProviderFailureClass)),
   usageLimitResetAt: Schema.optional(Schema.NullOr(IsoDateTime)),

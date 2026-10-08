@@ -310,6 +310,118 @@ const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
   assert.deepEqual(updated?.restartCancelledBackgroundWork, work);
 });
 
+// A subagent's child thread has no runs; its shell mirrors the parent's
+// subagent record through both shell reads (list and per-thread).
+const subagentChildShellMirrorsSubagentStatus = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const later = DateTime.add(now, { seconds: 1 });
+  const parentThreadId = ThreadId.make("thread:subagent-shell-parent");
+  const childThreadId = ThreadId.make("thread:subagent-shell-child");
+  const projectId = ProjectId.make("project:subagent-shell");
+  const runId = RunId.make("run:subagent-shell");
+  const subagentId = NodeId.make("node:subagent-shell-task");
+  const threadFields = {
+    createdBy: "user" as const,
+    creationSource: "web" as const,
+    projectId,
+    providerInstanceId,
+    modelSelection,
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    forkedFrom: null,
+    createdAt: now,
+    updatedAt: now,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    deletedAt: null,
+  };
+  yield* store.apply({
+    id: EventId.make("event:subagent-shell:parent"),
+    type: "thread.created",
+    threadId: parentThreadId,
+    occurredAt: now,
+    payload: {
+      ...threadFields,
+      id: parentThreadId,
+      title: "Parent",
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: parentThreadId },
+    },
+  });
+  yield* store.apply({
+    id: EventId.make("event:subagent-shell:child"),
+    type: "thread.created",
+    threadId: childThreadId,
+    occurredAt: now,
+    payload: {
+      ...threadFields,
+      id: childThreadId,
+      title: "Explore",
+      lineage: {
+        parentThreadId,
+        relationshipToParent: "subagent",
+        rootThreadId: parentThreadId,
+      },
+    },
+  });
+  const updateSubagent = (status: "running" | "completed", at: DateTime.Utc) =>
+    store.apply({
+      id: EventId.make(`event:subagent-shell:task:${status}`),
+      type: "subagent.updated",
+      threadId: parentThreadId,
+      runId,
+      nodeId: subagentId,
+      driver,
+      providerInstanceId,
+      occurredAt: at,
+      payload: {
+        id: subagentId,
+        threadId: parentThreadId,
+        runId,
+        parentNodeId: NodeId.make("node:subagent-shell-root"),
+        origin: "provider_native" as const,
+        createdBy: "agent" as const,
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Explore the repo.",
+        title: "Explore",
+        model: null,
+        status,
+        result: null,
+        startedAt: now,
+        completedAt: status === "completed" ? at : null,
+        updatedAt: at,
+      },
+    });
+  const shellStatuses = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const listed = (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId);
+    const single = yield* store.getThreadShell(threadId);
+    return [listed?.subagentStatus, single?.subagentStatus];
+  });
+
+  assert.deepEqual(yield* shellStatuses(childThreadId), [undefined, undefined]);
+
+  yield* updateSubagent("running", now);
+  assert.deepEqual(yield* shellStatuses(childThreadId), ["running", "running"]);
+
+  yield* updateSubagent("completed", later);
+  assert.deepEqual(yield* shellStatuses(childThreadId), ["completed", "completed"]);
+  // The parent owns the record but is not a subagent thread.
+  assert.deepEqual(yield* shellStatuses(parentThreadId), [undefined, undefined]);
+});
+
+it.effect("memory shells mirror a subagent's status on its child thread", () =>
+  subagentChildShellMirrorsSubagentStatus.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
 it.effect("memory projection keeps restart-cancelled work through a stale run.updated", () =>
   restartCancelledWorkSurvivesStaleRunUpdate.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
@@ -333,6 +445,10 @@ it.effect("memory recovery selection includes unfinished items from missing runs
 );
 
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
+  it.effect(
+    "shells mirror a subagent's status on its child thread",
+    () => subagentChildShellMirrorsSubagentStatus,
+  );
   it.effect(
     "keeps restart-cancelled work through a stale run.updated",
     () => restartCancelledWorkSurvivesStaleRunUpdate,

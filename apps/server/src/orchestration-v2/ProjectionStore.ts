@@ -26,6 +26,7 @@ import type {
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
   OrchestrationV2Subagent,
+  OrchestrationV2SubagentStatus,
   OrchestrationV2ThreadShellSnapshot,
   OrchestrationV2ShellThreadStatus,
   OrchestrationV2ThreadShell,
@@ -53,6 +54,7 @@ import {
   OrchestrationV2RunJson as OrchestrationV2RunJsonSchema,
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
+  OrchestrationV2SubagentStatus as OrchestrationV2SubagentStatusSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
   RunId,
@@ -941,6 +943,8 @@ type PayloadRow = {
   readonly payload_json: string;
 };
 
+const isSubagentStatus = Schema.is(OrchestrationV2SubagentStatusSchema);
+
 type ShellThreadRow = {
   readonly thread_id: string;
   readonly payload_json: string;
@@ -967,6 +971,7 @@ type ShellThreadRow = {
   readonly has_actionable_proposed_plan: number;
   readonly item_count: number;
   readonly runless_item_count: number;
+  readonly subagent_status: string | null;
 };
 
 type ShellRunRow = {
@@ -1524,6 +1529,29 @@ export function threadShellFromProjection(
 }
 
 /**
+ * Adds the parent's subagent status to a subagent child thread's shell. The
+ * memory store's counterpart to the SQL shell's `subagent_status` column.
+ */
+function withChildSubagentStatus(
+  shell: OrchestrationV2ThreadShell,
+  projections: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>,
+): OrchestrationV2ThreadShell {
+  let latest: OrchestrationV2Subagent | null = null;
+  for (const projection of projections.values()) {
+    for (const subagent of projection.subagents) {
+      if (
+        subagent.childThreadId === shell.id &&
+        (latest === null ||
+          DateTime.toEpochMillis(subagent.updatedAt) >= DateTime.toEpochMillis(latest.updatedAt))
+      ) {
+        latest = subagent;
+      }
+    }
+  }
+  return latest === null ? shell : { ...shell, subagentStatus: latest.status };
+}
+
+/**
  * Provider instances that have owned this thread's root conversation, oldest
  * first. Subagent provider threads carry an owner node and are excluded so a
  * delegated Codex child does not make a Claude thread look handed off.
@@ -1591,6 +1619,7 @@ type ShellThreadState = {
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly goal: OrchestrationV2ThreadShell["goal"];
+  readonly subagentStatus: OrchestrationV2SubagentStatus | null;
   readonly itemCount: number;
   readonly runlessItemCount: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
@@ -1739,6 +1768,7 @@ function shellFromState(input: {
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
     status: input.state.latestRunStatus,
+    ...(input.state.subagentStatus === null ? {} : { subagentStatus: input.state.subagentStatus }),
     lastError: input.state.lastError,
     lastErrorClass: input.state.lastErrorClass,
     usageLimitResetAt: input.state.usageLimitResetAt,
@@ -5236,7 +5266,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_turn_items i
                 WHERE i.thread_id = t.thread_id
                   AND i.run_id IS NULL
-              ) AS runless_item_count
+              ) AS runless_item_count,
+              -- A subagent's child thread has no runs; its live status is the
+              -- parent's subagent record (child_thread_id index).
+              (
+                SELECT subagent.status
+                FROM orchestration_v2_projection_subagents subagent
+                WHERE subagent.child_thread_id = t.thread_id
+                ORDER BY subagent.updated_at DESC, subagent.subagent_id DESC
+                LIMIT 1
+              ) AS subagent_status
             FROM orchestration_v2_projection_threads t
             -- The newest run not waiting in a held queue, matching latestUnheldRun.
             LEFT JOIN orchestration_v2_projection_runs presented ON presented.run_id = (
@@ -5675,6 +5714,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             providerThreadsByThreadId.get(thread.id) ?? [],
             thread.activeProviderThreadId,
           ),
+          subagentStatus: isSubagentStatus(row.subagent_status) ? row.subagent_status : null,
           itemCount: row.item_count,
           runlessItemCount: row.runless_item_count,
           updatedAt: thread.updatedAt,
@@ -5963,7 +6003,13 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           const shells = yield* Effect.forEach(
             selectedThreadIds.toSorted((left, right) => String(left).localeCompare(String(right))),
             (threadId) =>
-              service.getThreadProjection(threadId).pipe(Effect.map(threadShellFromProjection)),
+              service
+                .getThreadProjection(threadId)
+                .pipe(
+                  Effect.map((projection) =>
+                    withChildSubagentStatus(threadShellFromProjection(projection), existing),
+                  ),
+                ),
           );
           const visible = shells.filter((thread) => thread.deletedAt === null);
           return {
@@ -5983,7 +6029,11 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           }
           const shell = yield* service
             .getThreadProjection(threadId)
-            .pipe(Effect.map(threadShellFromProjection));
+            .pipe(
+              Effect.map((projection) =>
+                withChildSubagentStatus(threadShellFromProjection(projection), existing),
+              ),
+            );
           return shell.deletedAt === null ? shell : null;
         }),
       getThread: (threadId) =>

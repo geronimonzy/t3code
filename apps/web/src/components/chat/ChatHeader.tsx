@@ -37,6 +37,9 @@ import {
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
 import { cn } from "~/lib/utils";
+import { useNavigate } from "@tanstack/react-router";
+import { useThreadShell } from "../../state/entities";
+import { buildThreadRouteParams } from "../../threadRoutes";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -71,6 +74,63 @@ export function resolveRenameCommit(input: {
 // events (the second click dismisses it and dblclick still fires), so it
 // opens immediately.
 const TITLE_MENU_OPEN_DELAY_MS = 500;
+// Guards against a malformed lineage cycle; real subagent nesting is shallow.
+const MAX_SUBAGENT_ANCESTORS = 8;
+
+/**
+ * One ancestor of a subagent thread in the header path, preceded by its own
+ * ancestors when it is itself a subagent. Each links back to its thread.
+ */
+const SubagentAncestorCrumb = memo(function SubagentAncestorCrumb(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly depth: number;
+}) {
+  const threadRef = useMemo(
+    () => scopeThreadRef(props.environmentId, props.threadId),
+    [props.environmentId, props.threadId],
+  );
+  const shell = useThreadShell(threadRef);
+  const navigate = useNavigate();
+  if (shell === null) return null;
+  const parentThreadId =
+    shell.lineage.relationshipToParent === "subagent" ? shell.lineage.parentThreadId : null;
+  return (
+    <>
+      {parentThreadId !== null && props.depth < MAX_SUBAGENT_ANCESTORS ? (
+        <SubagentAncestorCrumb
+          environmentId={props.environmentId}
+          threadId={parentThreadId}
+          depth={props.depth + 1}
+        />
+      ) : null}
+      <WorkspaceBreadcrumbItem className="shrink">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={() =>
+                  void navigate({
+                    to: "/$environmentId/$threadId",
+                    params: buildThreadRouteParams(threadRef),
+                  })
+                }
+                className="inline-flex min-w-0 max-w-full cursor-pointer items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            }
+          >
+            <WorkspaceBreadcrumbText className="max-w-40">{shell.title}</WorkspaceBreadcrumbText>
+          </TooltipTrigger>
+          <TooltipPopup side="top">Open {shell.title}</TooltipPopup>
+        </Tooltip>
+      </WorkspaceBreadcrumbItem>
+      <WorkspaceBreadcrumbSeparator>
+        <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
+      </WorkspaceBreadcrumbSeparator>
+    </>
+  );
+});
 export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
   activeThreadId,
@@ -91,6 +151,12 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     AuthOrchestrationOperateScope,
   );
+  // A subagent's thread shows the path of threads that spawned it.
+  const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const subagentParentThreadId =
+    activeThreadShell?.lineage.relationshipToParent === "subagent"
+      ? activeThreadShell.lineage.parentThreadId
+      : null;
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -292,6 +358,13 @@ export const ChatHeader = memo(function ChatHeader({
               <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
             </WorkspaceBreadcrumbSeparator>
           </>
+        ) : null}
+        {subagentParentThreadId !== null ? (
+          <SubagentAncestorCrumb
+            environmentId={activeThreadEnvironmentId}
+            threadId={subagentParentThreadId}
+            depth={0}
+          />
         ) : null}
         <WorkspaceBreadcrumbItem current className="min-w-10 flex-1">
           {renamingTitle !== null ? (

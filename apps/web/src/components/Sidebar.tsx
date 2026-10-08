@@ -183,6 +183,9 @@ import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
+  deriveSidebarSubagentRows,
+  sidebarSubagentLifecycles,
+  type SidebarSubagentRow,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
@@ -232,6 +235,9 @@ import {
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
+import { SidebarSubagentRows } from "./SidebarSubagentRows";
+import { useLingeringSubagentIds } from "../hooks/useLingeringSubagentIds";
+import { useSubagentMascotsPreference } from "../subagentStripPreferences";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import {
   ThreadPullRequestBadgeControl,
@@ -292,6 +298,7 @@ const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new M
 // Collapsed shelves share one empty list so a route change alone does not
 // give the sidebar list a new identity.
 const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
+const EMPTY_SUBAGENT_ROWS: ReadonlyArray<SidebarSubagentRow> = [];
 
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
@@ -1103,6 +1110,9 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
+  /** Live subagents nested under this row. */
+  subagentRows: ReadonlyArray<SidebarSubagentRow>;
+  subagentMascots: boolean;
   variant: "card" | "slim";
   // Settled rows un-settle, snoozed rows wake, and cards settle.
   variantAction: SidebarSweepAction;
@@ -1948,6 +1958,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
+        <SidebarSubagentRows
+          rows={props.subagentRows}
+          mascots={props.subagentMascots}
+          onActivate={onThreadActivate}
+        />
       </li>
     );
   }
@@ -2213,6 +2228,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
+      <SidebarSubagentRows
+        rows={props.subagentRows}
+        mascots={props.subagentMascots}
+        onActivate={onThreadActivate}
+      />
     </li>
   );
 });
@@ -2385,6 +2405,14 @@ export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  // Live subagents nest under their parent row; finished ones linger briefly as done.
+  const [subagentMascots] = useSubagentMascotsPreference();
+  const subagentLifecycles = useMemo(() => sidebarSubagentLifecycles(threads), [threads]);
+  const lingeringSubagentKeys = useLingeringSubagentIds(subagentLifecycles, "sidebar");
+  const subagentRowsByParentKey = useMemo(
+    () => deriveSidebarSubagentRows(threads, lingeringSubagentKeys),
+    [lingeringSubagentKeys, threads],
+  );
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -5363,6 +5391,10 @@ export default function Sidebar() {
                               changeRequestSnapshotByKey.get(threadKey) ?? null
                             }
                             onChangeRequestSnapshot={setThreadChangeRequestSnapshot}
+                            subagentRows={
+                              subagentRowsByParentKey.get(threadKey) ?? EMPTY_SUBAGENT_ROWS
+                            }
+                            subagentMascots={subagentMascots}
                           />
                         );
                       };

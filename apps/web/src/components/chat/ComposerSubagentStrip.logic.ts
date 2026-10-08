@@ -28,7 +28,9 @@ export interface SubagentStrip {
   readonly workingCount: number;
 }
 
-function chipState(status: OrchestrationV2Subagent["status"]): SubagentStripChipState {
+export function subagentChipState(
+  status: OrchestrationV2Subagent["status"],
+): SubagentStripChipState {
   if (isActiveSubagentStatus(status)) return "working";
   if (status === "completed" || status === "idle") return "done";
   if (status === "failed") return "failed";
@@ -101,9 +103,15 @@ export const NO_SUBAGENT_STRIP_PHASES: SubagentStripPhases = new Map();
  * Folds the latest roster into the tracked phases, returning the same map
  * when nothing changed.
  */
+/** The two fields phase tracking reads, so sidebar child threads can share it. */
+export interface SubagentLifecycle {
+  readonly id: string;
+  readonly status: OrchestrationV2Subagent["status"];
+}
+
 export function observeSubagentStrip(
   phases: SubagentStripPhases,
-  subagents: ReadonlyArray<OrchestrationV2Subagent>,
+  subagents: ReadonlyArray<SubagentLifecycle>,
 ): SubagentStripPhases {
   let next: Map<string, SubagentStripPhase> | null = null;
   for (const subagent of subagents) {
@@ -165,7 +173,7 @@ export function deriveSubagentStrip(
   const chips: SubagentStripChip[] = [];
   let workingCount = 0;
   for (const subagent of shown) {
-    const state = chipState(subagent.status);
+    const state = subagentChipState(subagent.status);
     if (state === "working") workingCount += 1;
     const progress = subagent.progress?.trim();
     chips.push({

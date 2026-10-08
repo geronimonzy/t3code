@@ -4,30 +4,20 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { CheckIcon, CircleSlashIcon, CircleXIcon, UsersIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerBanner } from "./ComposerBanner";
+import { useLingeringSubagentIds } from "../../hooks/useLingeringSubagentIds";
 import {
   applySubagentNotifications,
   deriveSubagentStrip,
-  expireSubagentStripPhase,
-  lingeringSubagentIds,
-  NO_SUBAGENT_STRIP_PHASES,
-  observeSubagentStrip,
-  SUBAGENT_STRIP_DONE_LINGER_MS,
-  type SubagentStripPhases,
   type SubagentStrip,
   type SubagentStripChip,
 } from "./ComposerSubagentStrip.logic";
 
 const NO_SUBAGENTS: ReadonlyArray<OrchestrationV2Subagent> = [];
-
-interface TrackedPhases {
-  readonly threadKey: string;
-  readonly phases: SubagentStripPhases;
-}
 
 /**
  * The live subagent strip for a thread, or null while nothing is running.
@@ -43,63 +33,18 @@ export function useComposerSubagentStrip(
     () => applySubagentNotifications(projectedSubagents ?? NO_SUBAGENTS, turnItems ?? []),
     [projectedSubagents, turnItems],
   );
-  const [tracked, setTracked] = useState<TrackedPhases>({
-    threadKey,
-    phases: NO_SUBAGENT_STRIP_PHASES,
-  });
-  const trackedPhases = tracked.threadKey === threadKey ? tracked.phases : NO_SUBAGENT_STRIP_PHASES;
-  // Folded in during render, so a finished agent keeps its chip from the first
-  // frame its status flips instead of blinking out for one paint.
-  const phases = observeSubagentStrip(trackedPhases, subagents);
-  if (phases !== trackedPhases) setTracked({ threadKey, phases });
-
-  // One timer per settling agent. Resuming clears it, so settling again restarts the linger.
-  const timersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  useEffect(() => {
-    const timers = timersRef.current;
-    for (const [id, timer] of timers) {
-      if (phases.get(id) !== "settling") {
-        clearTimeout(timer);
-        timers.delete(id);
-      }
-    }
-    for (const [id, phase] of phases) {
-      if (phase !== "settling" || timers.has(id)) continue;
-      timers.set(
-        id,
-        setTimeout(() => {
-          timers.delete(id);
-          setTracked((current) =>
-            current.threadKey === threadKey
-              ? { threadKey, phases: expireSubagentStripPhase(current.phases, id) }
-              : current,
-          );
-        }, SUBAGENT_STRIP_DONE_LINGER_MS),
-      );
-    }
-  }, [phases, threadKey]);
-
-  useEffect(() => {
-    const timers = timersRef.current;
-    return () => {
-      for (const timer of timers.values()) clearTimeout(timer);
-    };
-  }, []);
-
-  return useMemo(
-    () => deriveSubagentStrip(subagents, lingeringSubagentIds(phases)),
-    [subagents, phases],
-  );
+  const lingeringIds = useLingeringSubagentIds(subagents, threadKey);
+  return useMemo(() => deriveSubagentStrip(subagents, lingeringIds), [subagents, lingeringIds]);
 }
 
-const STATE_LABEL = {
+export const SUBAGENT_STATE_LABEL = {
   working: "Working",
   done: "Done",
   failed: "Failed",
   stopped: "Stopped",
 } as const satisfies Record<SubagentStripChip["state"], string>;
 
-const DETAIL_TONE = {
+export const SUBAGENT_STATE_TONE = {
   working: "text-muted-foreground",
   done: "text-success",
   failed: "text-destructive",
@@ -150,7 +95,10 @@ export function ComposerSubagentStrip(props: {
                 {strip.overflow.map((chip) => (
                   <li key={chip.id} className="truncate">
                     {chip.title}
-                    <span className="text-muted-foreground"> · {STATE_LABEL[chip.state]}</span>
+                    <span className="text-muted-foreground">
+                      {" "}
+                      · {SUBAGENT_STATE_LABEL[chip.state]}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -169,15 +117,15 @@ function SubagentChip(props: {
 }) {
   const { chip } = props;
   const childThreadId = chip.childThreadId;
-  const detail = chip.progress ?? STATE_LABEL[chip.state];
+  const detail = chip.progress ?? SUBAGENT_STATE_LABEL[chip.state];
   const content = (
     <>
       {props.mascots ? <SubagentMascot state={chip.state} /> : null}
-      {props.mascots && chip.state === "working" ? null : <ChipStateIcon state={chip.state} />}
+      {props.mascots && chip.state === "working" ? null : <SubagentStateIcon state={chip.state} />}
       <span className="max-w-[60%] shrink-0 truncate font-medium text-foreground">
         {chip.title}
       </span>
-      <span className={cn("min-w-0 truncate", DETAIL_TONE[chip.state])}>{detail}</span>
+      <span className={cn("min-w-0 truncate", SUBAGENT_STATE_TONE[chip.state])}>{detail}</span>
     </>
   );
   const className =
@@ -215,7 +163,7 @@ function SubagentChip(props: {
   );
 }
 
-function ChipStateIcon(props: { readonly state: SubagentStripChip["state"] }) {
+export function SubagentStateIcon(props: { readonly state: SubagentStripChip["state"] }) {
   switch (props.state) {
     case "working":
       // The same duty-cycled pulse the background-work banner uses for live work.
@@ -239,7 +187,7 @@ function ChipStateIcon(props: { readonly state: SubagentStripChip["state"] }) {
  * A static pixel Claude. It hops once when it appears and jumps once when it
  * finishes; the changing animation name is what replays it, and nothing loops.
  */
-function SubagentMascot(props: { readonly state: SubagentStripChip["state"] }) {
+export function SubagentMascot(props: { readonly state: SubagentStripChip["state"] }) {
   const settled = props.state !== "working";
   return (
     <svg

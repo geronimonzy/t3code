@@ -59,6 +59,8 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  deriveSidebarSubagentRows,
+  sidebarSubagentLifecycles,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
@@ -2314,5 +2316,67 @@ describe("Working shelf (beta)", () => {
         unsnooze: false,
       });
     });
+  });
+});
+
+describe("deriveSidebarSubagentRows", () => {
+  const environmentId = EnvironmentId.make("environment-local");
+  const parentId = ThreadId.make("thread-parent");
+  const child = (
+    id: string,
+    subagentStatus: "running" | "completed" | "failed" | null,
+    createdAt: string,
+  ) => ({
+    ...makeThreadFixture({
+      id: ThreadId.make(id),
+      environmentId,
+      title: `Agent ${id}`,
+      createdAt,
+      lineage: {
+        rootThreadId: parentId,
+        parentThreadId: parentId,
+        relationshipToParent: "subagent",
+      },
+    }),
+    subagentStatus,
+  });
+  const parentKey = `${environmentId}:${parentId}`;
+
+  it("nests working child threads under their parent, oldest first", () => {
+    const rows = deriveSidebarSubagentRows(
+      [
+        child("b", "running", "2026-10-08T00:00:02.000Z"),
+        child("a", "running", "2026-10-08T00:00:01.000Z"),
+        makeThreadFixture({ id: parentId, environmentId }),
+      ],
+      new Set(),
+    );
+    expect(rows.get(parentKey)?.map((row) => [row.title, row.state])).toEqual([
+      ["Agent a", "working"],
+      ["Agent b", "working"],
+    ]);
+    expect(rows.size).toBe(1);
+  });
+
+  it("keeps a finished child only while it lingers, with its outcome", () => {
+    const threads = [
+      child("a", "completed", "2026-10-08T00:00:01.000Z"),
+      child("b", "failed", "2026-10-08T00:00:02.000Z"),
+    ];
+    expect(deriveSidebarSubagentRows(threads, new Set()).size).toBe(0);
+    const rows = deriveSidebarSubagentRows(threads, new Set([`${environmentId}:b`]));
+    expect(rows.get(parentKey)?.map((row) => row.state)).toEqual(["failed"]);
+  });
+
+  it("ignores child threads whose server reports no subagent status", () => {
+    const threads = [child("a", null, "2026-10-08T00:00:01.000Z")];
+    expect(deriveSidebarSubagentRows(threads, new Set()).size).toBe(0);
+    expect(sidebarSubagentLifecycles(threads)).toEqual([]);
+  });
+
+  it("tracks child lifecycles under the same keys the rows use", () => {
+    expect(sidebarSubagentLifecycles([child("a", "running", "2026-10-08T00:00:01.000Z")])).toEqual([
+      { id: `${environmentId}:a`, status: "running" },
+    ]);
   });
 });

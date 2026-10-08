@@ -1,6 +1,11 @@
-import type { OrchestrationV2Subagent, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationV2Subagent,
+  OrchestrationV2ThreadProjection,
+  ThreadId,
+} from "@t3tools/contracts";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { isActiveSubagentStatus } from "@t3tools/client-runtime/state/subagentRuntime";
+import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import * as DateTime from "effect/DateTime";
 
 /** How long a finished chip stays in the strip before it leaves. */
@@ -33,6 +38,52 @@ function chipState(status: OrchestrationV2Subagent["status"]): SubagentStripChip
 function chipTitle(subagent: OrchestrationV2Subagent): string {
   const title = subagent.title?.trim() || subagent.prompt.trim().split("\n", 1)[0] || "Subagent";
   return formatSubagentDisplayTitle(title);
+}
+
+type TurnItem = OrchestrationV2ThreadProjection["turnItems"][number];
+
+/**
+ * A background agent's own status only settles once the parent wakes and
+ * replays its completion, but the wake's notification lands in the timeline
+ * first. Settles working agents that already have one, so the strip agrees
+ * with the timeline. Returns the same array when nothing changes.
+ */
+export function applySubagentNotifications(
+  subagents: ReadonlyArray<OrchestrationV2Subagent>,
+  turnItems: ReadonlyArray<TurnItem>,
+): ReadonlyArray<OrchestrationV2Subagent> {
+  const working = new Map<ThreadId, OrchestrationV2Subagent>();
+  let earliestStart = Number.POSITIVE_INFINITY;
+  for (const subagent of subagents) {
+    if (subagent.childThreadId === null || !isActiveSubagentStatus(subagent.status)) continue;
+    working.set(subagent.childThreadId, subagent);
+    const startedAt = DateTime.toEpochMillis(subagent.startedAt ?? subagent.updatedAt);
+    earliestStart = Math.min(earliestStart, startedAt);
+  }
+  if (working.size === 0) return subagents;
+
+  const notified = new Map<string, OrchestrationV2Subagent["status"]>();
+  // Newest first, stopping before anything older than the oldest working agent.
+  for (let index = turnItems.length - 1; index >= 0; index -= 1) {
+    const item = turnItems[index]!;
+    const at = DateTime.toEpochMillis(item.updatedAt);
+    if (at < earliestStart) break;
+    if (item.type !== "notification") continue;
+    const childThreadId = notificationChildThreadId(item.source);
+    const subagent = childThreadId === undefined ? undefined : working.get(childThreadId);
+    // "updated" and "unknown" report progress, not an ending.
+    const status =
+      item.outcome === "updated" || item.outcome === "unknown" ? undefined : item.outcome;
+    if (!subagent || !status || notified.has(subagent.id)) continue;
+    // A resumed agent's earlier notification does not end its current activation.
+    if (at < DateTime.toEpochMillis(subagent.startedAt ?? subagent.updatedAt)) continue;
+    notified.set(subagent.id, status);
+  }
+  if (notified.size === 0) return subagents;
+  return subagents.map((subagent) => {
+    const status = notified.get(subagent.id);
+    return status === undefined ? subagent : { ...subagent, status };
+  });
 }
 
 /**

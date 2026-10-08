@@ -10,6 +10,7 @@ import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerBanner } from "./ComposerBanner";
 import {
+  applySubagentNotifications,
   deriveSubagentStrip,
   expireSubagentStripPhase,
   lingeringSubagentIds,
@@ -33,10 +34,15 @@ interface TrackedPhases {
  * Agents seen finishing stay for a moment as "done" chips before they leave.
  */
 export function useComposerSubagentStrip(
-  projection: Pick<OrchestrationV2ThreadProjection, "subagents"> | null,
+  projection: Pick<OrchestrationV2ThreadProjection, "subagents" | "turnItems"> | null,
   threadKey: string,
 ): SubagentStrip | null {
-  const subagents = projection?.subagents ?? NO_SUBAGENTS;
+  const projectedSubagents = projection?.subagents;
+  const turnItems = projection?.turnItems;
+  const subagents = useMemo(
+    () => applySubagentNotifications(projectedSubagents ?? NO_SUBAGENTS, turnItems ?? []),
+    [projectedSubagents, turnItems],
+  );
   const [tracked, setTracked] = useState<TrackedPhases>({
     threadKey,
     phases: NO_SUBAGENT_STRIP_PHASES,

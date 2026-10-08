@@ -10,6 +10,7 @@ import {
 import * as DateTime from "effect/DateTime";
 
 import {
+  applySubagentNotifications,
   deriveSubagentStrip,
   expireSubagentStripPhase,
   lingeringSubagentIds,
@@ -161,5 +162,51 @@ describe("subagent strip phases", () => {
     const observed = observeSubagentStrip(NO_SUBAGENT_STRIP_PHASES, opened);
     expect(observed).toBe(NO_SUBAGENT_STRIP_PHASES);
     expect(deriveSubagentStrip(opened, lingeringSubagentIds(observed))).toBeNull();
+  });
+});
+
+type TurnItem = Parameters<typeof applySubagentNotifications>[1][number];
+
+function notification(
+  childId: string,
+  outcome: "completed" | "failed" | "updated",
+  iso = "2026-10-08T00:00:20.000Z",
+): TurnItem {
+  // Only the fields the strip reads; the rest of a turn item is irrelevant here.
+  return {
+    type: "notification",
+    source: { kind: "subagent", childThreadId: ThreadId.make(`child-${childId}`) },
+    outcome,
+    summary: "Agent finished",
+    updatedAt: DateTime.makeUnsafe(iso),
+  } as unknown as TurnItem;
+}
+
+describe("applySubagentNotifications", () => {
+  const filler = {
+    type: "assistant_message",
+    updatedAt: DateTime.makeUnsafe("2026-10-08T00:00:21.000Z"),
+  } as unknown as TurnItem;
+
+  it("settles a working agent as soon as its wake notification lands", () => {
+    const result = applySubagentNotifications(
+      [subagent("a"), subagent("b")],
+      [notification("a", "completed"), notification("b", "failed"), filler],
+    );
+    expect(result.map((agent) => agent.status)).toEqual(["completed", "failed"]);
+  });
+
+  it("ignores progress updates and notifications from before the agent started", () => {
+    const agents = [subagent("a"), subagent("b")];
+    const result = applySubagentNotifications(agents, [
+      notification("a", "updated"),
+      notification("b", "completed", "2026-10-07T23:59:59.000Z"),
+    ]);
+    expect(result).toBe(agents);
+  });
+
+  it("returns the same array when no agent is working", () => {
+    const agents = [subagent("a", { status: "completed" })];
+    expect(applySubagentNotifications(agents, [notification("a", "completed")])).toBe(agents);
   });
 });

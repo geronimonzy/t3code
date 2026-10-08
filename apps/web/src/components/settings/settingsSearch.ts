@@ -294,7 +294,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "mascot-animations",
     title: "Mascot animations",
     to: "/settings/appearance",
-    searchTerms: ["idle input working done animation pixel claude"],
+    searchTerms: ["idle input working done animation pixel claude theme preset samurai"],
   },
   {
     id: "project-grouping",

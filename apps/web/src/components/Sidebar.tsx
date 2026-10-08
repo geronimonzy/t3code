@@ -2077,7 +2077,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           )}
                         >
                           {props.subagentMascots && threadMascotState !== null ? (
-                            <Mascot state={threadMascotState} className="h-3.5" />
+                            <Mascot state={threadMascotState} className="h-4" />
                           ) : topStatus.icon === "working" ? (
                             <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
                           ) : topStatus.icon === "input" ? (

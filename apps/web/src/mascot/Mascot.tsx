@@ -70,7 +70,7 @@ export function MascotSprite(props: {
     <span
       aria-hidden="true"
       className={cn(
-        "inline-block h-3 flex-none overflow-hidden",
+        "inline-block h-3.5 flex-none overflow-hidden",
         props.muted && "opacity-50 grayscale",
         props.className,
       )}

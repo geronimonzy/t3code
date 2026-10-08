@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_MASCOT_ANIMATION_IDS,
+  MASCOT_THEMES,
+  matchingMascotTheme,
   MASCOT_ANIMATIONS,
   MASCOT_STATES,
   mascotFrameRuns,
@@ -55,9 +57,26 @@ describe("mascot animations", () => {
 
   it("merges same-color pixels into runs offset by the frame's sprite column", () => {
     expect(mascotFrameRuns(["cc.kk", ".c..."], 2)).toEqual([
-      { x: 26, y: 0, width: 2, color: "c" },
-      { x: 29, y: 0, width: 2, color: "k" },
-      { x: 27, y: 1, width: 1, color: "c" },
+      { x: 34, y: 0, width: 2, color: "c" },
+      { x: 37, y: 0, width: 2, color: "k" },
+      { x: 35, y: 1, width: 1, color: "c" },
     ]);
+  });
+
+  it.each(MASCOT_THEMES.map((theme) => [theme.id, theme] as const))(
+    "theme %s picks an eligible animation for every state",
+    (_id, theme) => {
+      for (const state of MASCOT_STATES) {
+        expect(resolveMascotAnimation(state, theme.animations[state]).id).toBe(
+          theme.animations[state],
+        );
+      }
+    },
+  );
+
+  it("recognises a theme from per-state choices, including defaults", () => {
+    expect(matchingMascotTheme({})?.id).toBe("classic");
+    expect(matchingMascotTheme(MASCOT_THEMES[1]!.animations)?.id).toBe("samurai");
+    expect(matchingMascotTheme({ ...MASCOT_THEMES[1]!.animations, idle: "still" })).toBeNull();
   });
 });

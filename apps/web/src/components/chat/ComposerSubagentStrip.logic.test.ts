@@ -12,8 +12,10 @@ import * as DateTime from "effect/DateTime";
 
 import {
   deriveSubagentStrip,
-  liveSubagentIds,
-  newlySettledSubagentIds,
+  expireSubagentStripPhase,
+  lingeringSubagentIds,
+  NO_SUBAGENT_STRIP_PHASES,
+  observeSubagentStripTurn,
 } from "./ComposerSubagentStrip.logic";
 
 function subagent(
@@ -111,19 +113,48 @@ describe("deriveSubagentStrip", () => {
   });
 });
 
-describe("newlySettledSubagentIds", () => {
-  it("reports only agents that were seen working and have since settled", () => {
-    const before = turnOf(subagent("a"), subagent("b"), subagent("c", { status: "completed" }));
-    const after = turnOf(
-      subagent("a", { status: "completed" }),
-      subagent("b"),
-      subagent("c", { status: "completed" }),
+describe("subagent strip phases", () => {
+  it("keeps a just-finished agent's chip before the tracker catches up", () => {
+    const working = observeSubagentStripTurn(
+      NO_SUBAGENT_STRIP_PHASES,
+      turnOf(subagent("a"), subagent("b")),
     );
-    expect(newlySettledSubagentIds(liveSubagentIds(before), after)).toEqual(["a"]);
+    // Status flipped, tracker not yet updated: the chip must not drop for this frame.
+    const flipped = turnOf(subagent("a", { status: "completed" }), subagent("b"));
+    expect(
+      deriveSubagentStrip(flipped, lingeringSubagentIds(working))?.visible.map(
+        (chip) => chip.state,
+      ),
+    ).toEqual(["done", "working"]);
   });
 
-  it("ignores agents that were already settled when first seen", () => {
+  it("lingers settled agents until they expire, then drops them", () => {
+    const working = observeSubagentStripTurn(NO_SUBAGENT_STRIP_PHASES, turnOf(subagent("a")));
+    const done = turnOf(subagent("a", { status: "completed" }));
+    const settling = observeSubagentStripTurn(working, done);
+    expect(settling.get("a")).toBe("settling");
+    expect(deriveSubagentStrip(done, lingeringSubagentIds(settling))).not.toBeNull();
+
+    const expired = expireSubagentStripPhase(settling, "a");
+    expect(deriveSubagentStrip(done, lingeringSubagentIds(expired))).toBeNull();
+    // Observing the same roster again keeps the same map, so nothing re-renders.
+    expect(observeSubagentStripTurn(expired, done)).toBe(expired);
+  });
+
+  it("does not expire an agent that resumed working", () => {
+    const settling = observeSubagentStripTurn(
+      observeSubagentStripTurn(NO_SUBAGENT_STRIP_PHASES, turnOf(subagent("a"))),
+      turnOf(subagent("a", { status: "idle" })),
+    );
+    const resumed = observeSubagentStripTurn(settling, turnOf(subagent("a")));
+    expect(resumed.get("a")).toBe("working");
+    expect(expireSubagentStripPhase(resumed, "a")).toBe(resumed);
+  });
+
+  it("never tracks agents that were already settled when first seen", () => {
     const opened = turnOf(subagent("a", { status: "completed" }));
-    expect(newlySettledSubagentIds(liveSubagentIds(null), opened)).toEqual([]);
+    const observed = observeSubagentStripTurn(NO_SUBAGENT_STRIP_PHASES, opened);
+    expect(observed).toBe(NO_SUBAGENT_STRIP_PHASES);
+    expect(deriveSubagentStrip(opened, lingeringSubagentIds(observed))).toBeNull();
   });
 });

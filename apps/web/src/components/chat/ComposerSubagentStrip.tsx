@@ -8,18 +8,19 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerBanner } from "./ComposerBanner";
 import {
   deriveSubagentStrip,
-  liveSubagentIds,
-  newlySettledSubagentIds,
+  expireSubagentStripPhase,
+  lingeringSubagentIds,
+  NO_SUBAGENT_STRIP_PHASES,
+  observeSubagentStripTurn,
   SUBAGENT_STRIP_DONE_LINGER_MS,
+  type SubagentStripPhases,
   type SubagentStrip,
   type SubagentStripChip,
 } from "./ComposerSubagentStrip.logic";
 
-const NO_IDS: ReadonlySet<string> = new Set();
-
-interface ScopedIds {
+interface TrackedPhases {
   readonly threadKey: string;
-  readonly ids: ReadonlySet<string>;
+  readonly phases: SubagentStripPhases;
 }
 
 /**
@@ -36,34 +37,41 @@ export function useComposerSubagentStrip(
     () => (runs && subagents ? deriveThreadTurnSubagents({ runs, subagents }) : null),
     [runs, subagents],
   );
-  const previousLiveRef = useRef<ScopedIds>({ threadKey, ids: NO_IDS });
-  const [lingering, setLingering] = useState<ScopedIds>({ threadKey, ids: NO_IDS });
-  // One timer per agent: a resumed agent that settles again restarts its own linger.
-  const timersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const [tracked, setTracked] = useState<TrackedPhases>({
+    threadKey,
+    phases: NO_SUBAGENT_STRIP_PHASES,
+  });
+  const trackedPhases = tracked.threadKey === threadKey ? tracked.phases : NO_SUBAGENT_STRIP_PHASES;
+  // Folded in during render, so a finished agent keeps its chip from the first
+  // frame its status flips instead of blinking out for one paint.
+  const phases = observeSubagentStripTurn(trackedPhases, turn);
+  if (phases !== trackedPhases) setTracked({ threadKey, phases });
 
+  // One timer per settling agent. Resuming clears it, so settling again restarts the linger.
+  const timersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   useEffect(() => {
-    const previous = previousLiveRef.current;
-    previousLiveRef.current = { threadKey, ids: liveSubagentIds(turn) };
-    if (previous.threadKey !== threadKey) return;
-    const settled = newlySettledSubagentIds(previous.ids, turn);
-    if (settled.length === 0) return;
-    setLingering((current) => ({
-      threadKey,
-      ids: new Set([...(current.threadKey === threadKey ? current.ids : []), ...settled]),
-    }));
-    for (const id of settled) {
-      clearTimeout(timersRef.current.get(id));
-      const timer = setTimeout(() => {
-        timersRef.current.delete(id);
-        setLingering((current) =>
-          current.threadKey === threadKey
-            ? { threadKey, ids: new Set([...current.ids].filter((other) => other !== id)) }
-            : current,
-        );
-      }, SUBAGENT_STRIP_DONE_LINGER_MS);
-      timersRef.current.set(id, timer);
+    const timers = timersRef.current;
+    for (const [id, timer] of timers) {
+      if (phases.get(id) !== "settling") {
+        clearTimeout(timer);
+        timers.delete(id);
+      }
     }
-  }, [threadKey, turn]);
+    for (const [id, phase] of phases) {
+      if (phase !== "settling" || timers.has(id)) continue;
+      timers.set(
+        id,
+        setTimeout(() => {
+          timers.delete(id);
+          setTracked((current) =>
+            current.threadKey === threadKey
+              ? { threadKey, phases: expireSubagentStripPhase(current.phases, id) }
+              : current,
+          );
+        }, SUBAGENT_STRIP_DONE_LINGER_MS),
+      );
+    }
+  }, [phases, threadKey]);
 
   useEffect(() => {
     const timers = timersRef.current;
@@ -72,8 +80,7 @@ export function useComposerSubagentStrip(
     };
   }, []);
 
-  const lingeringIds = lingering.threadKey === threadKey ? lingering.ids : NO_IDS;
-  return useMemo(() => deriveSubagentStrip(turn, lingeringIds), [turn, lingeringIds]);
+  return useMemo(() => deriveSubagentStrip(turn, lingeringSubagentIds(phases)), [turn, phases]);
 }
 
 const STATE_LABEL = {

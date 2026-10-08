@@ -35,30 +35,60 @@ function chipTitle(subagent: OrchestrationV2Subagent): string {
   return formatSubagentDisplayTitle(title);
 }
 
-/** Ids of the turn's subagents that are still working. */
-export function liveSubagentIds(turn: ThreadTurnSubagents | null): ReadonlySet<string> {
-  return new Set(
-    turn?.subagents
-      .filter((subagent) => isActiveSubagentStatus(subagent.status))
-      .map((subagent) => subagent.id) ?? [],
-  );
+/**
+ * What the strip remembers about each agent it has seen working: still
+ * working, settled and showing its outcome, or settled and gone. Agents
+ * first seen already settled are never tracked, so opening a thread does not
+ * flash old results back into the strip.
+ */
+export type SubagentStripPhase = "working" | "settling" | "expired";
+export type SubagentStripPhases = ReadonlyMap<string, SubagentStripPhase>;
+
+export const NO_SUBAGENT_STRIP_PHASES: SubagentStripPhases = new Map();
+
+/**
+ * Folds the latest roster into the tracked phases, returning the same map
+ * when nothing changed.
+ */
+export function observeSubagentStripTurn(
+  phases: SubagentStripPhases,
+  turn: ThreadTurnSubagents | null,
+): SubagentStripPhases {
+  let next: Map<string, SubagentStripPhase> | null = null;
+  for (const subagent of turn?.subagents ?? []) {
+    const phase = phases.get(subagent.id);
+    if (isActiveSubagentStatus(subagent.status)) {
+      if (phase === "working") continue;
+      next ??= new Map(phases);
+      next.set(subagent.id, "working");
+    } else if (phase === "working") {
+      next ??= new Map(phases);
+      next.set(subagent.id, "settling");
+    }
+  }
+  return next ?? phases;
+}
+
+/** Ends an agent's linger, unless it started working again meanwhile. */
+export function expireSubagentStripPhase(
+  phases: SubagentStripPhases,
+  id: string,
+): SubagentStripPhases {
+  if (phases.get(id) !== "settling") return phases;
+  const next = new Map(phases);
+  next.set(id, "expired");
+  return next;
 }
 
 /**
- * Subagents seen working before that have now settled. Only these earn a
- * brief "done" chip; agents that were already settled when the thread opened
- * never flash back into the strip.
+ * Settled agents that still get a chip. An agent tracked as working counts
+ * too: its status can flip a render before the tracker catches up, and
+ * dropping the chip for that one frame makes the strip blink.
  */
-export function newlySettledSubagentIds(
-  previousLiveIds: ReadonlySet<string>,
-  turn: ThreadTurnSubagents | null,
-): ReadonlyArray<string> {
-  if (turn === null) return [];
-  return turn.subagents
-    .filter(
-      (subagent) => previousLiveIds.has(subagent.id) && !isActiveSubagentStatus(subagent.status),
-    )
-    .map((subagent) => subagent.id);
+export function lingeringSubagentIds(phases: SubagentStripPhases): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const [id, phase] of phases) if (phase !== "expired") ids.add(id);
+  return ids;
 }
 
 /**

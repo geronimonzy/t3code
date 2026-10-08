@@ -6,7 +6,12 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { lowestRemainingPercent, sidebarUsageReports } from "./SidebarUsageLimits.logic";
+import {
+  highestUsedPercent,
+  sidebarUsageReports,
+  usageTone,
+  usedPercent,
+} from "./SidebarUsageLimits.logic";
 
 const now = Date.parse("2026-10-09T12:00:00.000Z");
 
@@ -64,13 +69,28 @@ describe("sidebarUsageReports", () => {
   });
 });
 
-describe("lowestRemainingPercent", () => {
-  it("picks the tightest window across accounts", () => {
+describe("used share", () => {
+  it("reports the most-spent window across accounts", () => {
     const [entry] = sidebarUsageReports(
       [provider("claude", "claudeAgent", { usageLimits: limits(30, 55) })],
       [],
       now,
     );
-    expect(lowestRemainingPercent(entry!.report)).toBe(45);
+    expect(highestUsedPercent(entry!.report)).toBe(55);
+  });
+
+  it("clamps and rounds the used share", () => {
+    expect(usedPercent({ usedPercent: 79.4 })).toBe(79);
+    expect(usedPercent({ usedPercent: 130 })).toBe(100);
+    expect(usedPercent({ usedPercent: -5 })).toBe(0);
+  });
+
+  it("warns from 75% used and turns critical from 90%", () => {
+    expect([usageTone(74), usageTone(75), usageTone(89), usageTone(90)]).toEqual([
+      "normal",
+      "warning",
+      "warning",
+      "critical",
+    ]);
   });
 });

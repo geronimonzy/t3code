@@ -1,5 +1,5 @@
 import type { UsageLimitSourceSnapshots, UsageLimitsReport } from "@t3tools/contracts";
-import { formatResetsIn, limitsNotice, remainingPercent } from "@t3tools/shared/usageLimits";
+import { limitsNotice } from "@t3tools/shared/usageLimits";
 import * as Schema from "effect/Schema";
 import { ChevronDownIcon, GaugeIcon } from "lucide-react";
 import { memo, useMemo } from "react";
@@ -10,10 +10,13 @@ import { cn } from "../../lib/utils";
 import { useServerConfigs } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { getDriverOption } from "../settings/providerDriverMeta";
-import { barColor, WindowBar } from "../usage/UsageLimits";
+import { usePrimarySettings } from "../../hooks/useSettings";
+import { formatResetTimestamp } from "../../timestampFormat";
 import {
-  lowestRemainingPercent,
+  highestUsedPercent,
   sidebarUsageReports,
+  usageTone,
+  usedPercent,
   type SidebarUsageReport,
 } from "./SidebarUsageLimits.logic";
 
@@ -21,6 +24,50 @@ const COLLAPSED_KEY = "t3code:sidebar-limits-collapsed";
 const NO_SOURCES: UsageLimitSourceSnapshots = [];
 
 type Account = UsageLimitsReport["accounts"][number];
+type UsageWindow = Account["limits"]["windows"][number];
+
+const TONE_FILL = {
+  normal: "bg-info",
+  warning: "bg-warning",
+  critical: "bg-error",
+} as const satisfies Record<ReturnType<typeof usageTone>, string>;
+
+/** One limit window: label and share used, a bar filling with use, then when it resets. */
+function UsageWindowRow(props: {
+  readonly window: UsageWindow;
+  readonly now: number;
+  readonly timestampFormat: Parameters<typeof formatResetTimestamp>[1];
+}) {
+  const { window } = props;
+  const used = usedPercent(window);
+  const resetsAt = window.resetsAt
+    ? formatResetTimestamp(window.resetsAt, props.timestampFormat, props.now)
+    : "";
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 items-baseline gap-2 text-xs">
+        <span className="min-w-0 truncate text-sidebar-foreground">{window.label}</span>
+        <span className="ms-auto shrink-0 text-muted-foreground tabular-nums">{used}% used</span>
+      </div>
+      <div
+        role="meter"
+        aria-label={`${window.label} usage`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={used}
+        className="h-1 overflow-hidden rounded-full bg-muted"
+      >
+        <div
+          className={cn("h-full rounded-full", TONE_FILL[usageTone(used)])}
+          style={{ width: `${used}%` }}
+        />
+      </div>
+      {resetsAt ? (
+        <span className="truncate text-muted-foreground text-xs">Resets {resetsAt}</span>
+      ) : null}
+    </div>
+  );
+}
 
 function providerLabel(driver: SidebarUsageReport["driver"]): string {
   return getDriverOption(driver)?.label ?? String(driver);
@@ -52,6 +99,7 @@ export const SidebarUsageLimits = memo(function SidebarUsageLimits() {
   const config = environmentId === null ? undefined : configs.get(environmentId);
   const nowMinute = useNowMinute();
   const [collapsed, setCollapsed] = useLocalStorage(COLLAPSED_KEY, false, Schema.Boolean);
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const providers = config?.providers;
   const sources = config?.usageLimitSources ?? NO_SOURCES;
   const now = Date.parse(nowMinute);
@@ -63,11 +111,12 @@ export const SidebarUsageLimits = memo(function SidebarUsageLimits() {
 
   const summary = reports
     .map((entry) => {
-      const lowest = lowestRemainingPercent(entry.report);
-      return lowest === null ? null : `${providerLabel(entry.driver)} ${lowest}%`;
+      const highest = highestUsedPercent(entry.report);
+      return highest === null ? null : `${providerLabel(entry.driver)} ${highest}%`;
     })
     .filter((part) => part !== null)
     .join(" · ");
+  const summaryLabel = summary ? `${summary} used` : "";
 
   return (
     <section aria-label="Usage limits" className="flex flex-col gap-1 px-2 pb-1">
@@ -79,8 +128,8 @@ export const SidebarUsageLimits = memo(function SidebarUsageLimits() {
       >
         <GaugeIcon aria-hidden className="size-3.5 shrink-0" />
         <span className="shrink-0 font-medium">Limits</span>
-        {collapsed && summary ? (
-          <span className="min-w-0 truncate tabular-nums">{summary}</span>
+        {collapsed && summaryLabel ? (
+          <span className="min-w-0 truncate tabular-nums">{summaryLabel}</span>
         ) : null}
         <ChevronDownIcon
           aria-hidden
@@ -88,7 +137,7 @@ export const SidebarUsageLimits = memo(function SidebarUsageLimits() {
         />
       </button>
       {collapsed ? null : (
-        <div className="flex flex-col gap-2 px-1.5">
+        <div className="flex flex-col gap-2.5 px-1.5">
           {reports.flatMap((entry) =>
             entry.report.accounts.map((account, index) => {
               const notice = limitsNotice(account.limits);
@@ -101,25 +150,12 @@ export const SidebarUsageLimits = memo(function SidebarUsageLimits() {
                     <span className="text-muted-foreground text-xs">{notice}</span>
                   ) : (
                     account.limits.windows.map((window) => (
-                      <div key={window.id} className="flex min-w-0 flex-col gap-0.5">
-                        <div className="flex min-w-0 items-baseline gap-1.5 text-xs">
-                          <span className="min-w-0 truncate text-muted-foreground">
-                            {window.label}
-                          </span>
-                          <span className="shrink-0 font-medium tabular-nums">
-                            {remainingPercent(window)}%
-                          </span>
-                          <span className="ms-auto shrink-0 text-muted-foreground tabular-nums">
-                            {formatResetsIn(window, now) ?? ""}
-                          </span>
-                        </div>
-                        <WindowBar
-                          compact
-                          color={barColor(entry.driver)}
-                          window={window}
-                          now={now}
-                        />
-                      </div>
+                      <UsageWindowRow
+                        key={window.id}
+                        window={window}
+                        now={now}
+                        timestampFormat={timestampFormat}
+                      />
                     ))
                   )}
                 </div>

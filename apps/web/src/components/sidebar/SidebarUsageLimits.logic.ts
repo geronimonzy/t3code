@@ -3,11 +3,7 @@ import type {
   UsageLimitSourceSnapshots,
   UsageLimitsReport,
 } from "@t3tools/contracts";
-import {
-  collectProviderUsageLimits,
-  hasProviderUsageLimits,
-  remainingPercent,
-} from "@t3tools/shared/usageLimits";
+import { collectProviderUsageLimits, hasProviderUsageLimits } from "@t3tools/shared/usageLimits";
 
 export interface SidebarUsageReport {
   readonly driver: ServerProvider["driver"];
@@ -37,10 +33,20 @@ export function sidebarUsageReports(
   return reports;
 }
 
-/** The tightest window left for a provider, for the collapsed one-line summary. */
-export function lowestRemainingPercent(report: UsageLimitsReport): number | null {
-  const remaining = report.accounts.flatMap((account) =>
-    account.limits.windows.map((window) => remainingPercent(window)),
-  );
-  return remaining.length === 0 ? null : Math.min(...remaining);
+/** Share of the window's quota spent, 0..100, as the providers' own usage pages show it. */
+export function usedPercent(window: { readonly usedPercent: number }): number {
+  return Math.round(Math.max(0, Math.min(100, window.usedPercent)));
+}
+
+/** Bar tone by how much is spent: calm, then a warning, then nearly out. */
+export function usageTone(used: number): "normal" | "warning" | "critical" {
+  if (used >= 90) return "critical";
+  if (used >= 75) return "warning";
+  return "normal";
+}
+
+/** The most-spent window for a provider, for the collapsed one-line summary. */
+export function highestUsedPercent(report: UsageLimitsReport): number | null {
+  const used = report.accounts.flatMap((account) => account.limits.windows.map(usedPercent));
+  return used.length === 0 ? null : Math.max(...used);
 }

@@ -9,7 +9,7 @@ import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-
 import * as DateTime from "effect/DateTime";
 
 /** How long a finished chip stays in the strip before it leaves. */
-export const SUBAGENT_STRIP_DONE_LINGER_MS = 3_000;
+export const SUBAGENT_STRIP_DONE_LINGER_MS = 5_000;
 export const SUBAGENT_STRIP_MAX_VISIBLE = 3;
 
 export type SubagentStripChipState = "working" | "done" | "failed" | "stopped";

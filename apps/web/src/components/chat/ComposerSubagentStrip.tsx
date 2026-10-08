@@ -99,6 +99,13 @@ const STATE_LABEL = {
   stopped: "Stopped",
 } as const satisfies Record<SubagentStripChip["state"], string>;
 
+const DETAIL_TONE = {
+  working: "text-muted-foreground",
+  done: "text-success",
+  failed: "text-destructive",
+  stopped: "text-muted-foreground",
+} as const satisfies Record<SubagentStripChip["state"], string>;
+
 export function ComposerSubagentStrip(props: {
   readonly strip: SubagentStrip;
   readonly mascots: boolean;
@@ -165,11 +172,12 @@ function SubagentChip(props: {
   const detail = chip.progress ?? STATE_LABEL[chip.state];
   const content = (
     <>
-      {props.mascots ? <SubagentMascot state={chip.state} /> : <ChipStateIcon state={chip.state} />}
+      {props.mascots ? <SubagentMascot state={chip.state} /> : null}
+      {props.mascots && chip.state === "working" ? null : <ChipStateIcon state={chip.state} />}
       <span className="max-w-[60%] shrink-0 truncate font-medium text-foreground">
         {chip.title}
       </span>
-      <span className="min-w-0 truncate text-muted-foreground">{detail}</span>
+      <span className={cn("min-w-0 truncate", DETAIL_TONE[chip.state])}>{detail}</span>
     </>
   );
   const className =

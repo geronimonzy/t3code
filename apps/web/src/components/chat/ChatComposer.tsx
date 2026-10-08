@@ -1552,7 +1552,9 @@ export interface ChatComposerProps {
   isRevertingCheckpoint?: boolean;
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
-  bannerItems: ReadonlyArray<ComposerBannerStackItem | ComposerBannerStackContent>;
+  bannerItems: readonly ComposerBannerStackItem[];
+  /** Live subagent activity, shown as its own row so no notice can cover it. */
+  subagentStrip?: ReactNode;
   /** Tokens a stale session would re-read; null when the thread is not offered compaction. */
   resumeCompactionTokens: number | null;
   /** The Compact chip is off, so the next send keeps full history. */
@@ -6705,6 +6707,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             items={bannerStackItems}
             attachedAbove={props.queuedRunsControl}
           />
+          {props.subagentStrip ? (
+            <ComposerBanner.Attachment>
+              <ComposerBanner.Root density="comfortable" data-chat-composer-subagent-strip="true">
+                {props.subagentStrip}
+              </ComposerBanner.Root>
+            </ComposerBanner.Attachment>
+          ) : null}
           {!activityStackItem && (shownSyncPhase || inlineTasksBadge) ? (
             <ComposerBanner.Attachment>
               <ComposerBanner.Root data-chat-composer-activity-strip="true">

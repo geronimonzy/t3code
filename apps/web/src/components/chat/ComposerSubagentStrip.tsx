@@ -91,7 +91,7 @@ export function ComposerSubagentStrip(props: {
   const { strip } = props;
   const total = strip.visible.length + strip.overflow.length;
   return (
-    <ComposerBanner.Row data-chat-composer-subagent-strip="true">
+    <ComposerBanner.Row>
       <ComposerBanner.Icon>
         <UsersIcon />
       </ComposerBanner.Icon>

@@ -486,10 +486,7 @@ import {
   type EditQueuedRunRequest,
 } from "./chat/QueuedRunsControl";
 import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
-import type {
-  ComposerBannerStackContent,
-  ComposerBannerStackItem,
-} from "./chat/ComposerBannerStack";
+import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ComposerSubagentStrip, useComposerSubagentStrip } from "./chat/ComposerSubagentStrip";
 import { useSubagentMascotsPreference } from "../subagentStripPreferences";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
@@ -7613,22 +7610,16 @@ export default function ChatView(props: ChatViewProps) {
     serverProjection,
     `${environmentId}:${activeThreadId}`,
   );
-  const subagentStripItem = useMemo<ComposerBannerStackContent | null>(
+  // Its own row under the banner stack: live progress must never hide behind a notice.
+  const subagentStripContent = useMemo(
     () =>
-      subagentStrip === null
-        ? null
-        : {
-            id: "subagent-strip",
-            variant: "default",
-            priority: "activity",
-            content: (
-              <ComposerSubagentStrip
-                strip={subagentStrip}
-                mascots={subagentMascots}
-                onOpenThread={onOpenRelatedThread}
-              />
-            ),
-          },
+      subagentStrip === null ? null : (
+        <ComposerSubagentStrip
+          strip={subagentStrip}
+          mascots={subagentMascots}
+          onOpenThread={onOpenRelatedThread}
+        />
+      ),
     [onOpenRelatedThread, subagentMascots, subagentStrip],
   );
   // Settled, snoozed, and woke are thread state, not composer actions: each
@@ -7801,16 +7792,11 @@ export default function ChatView(props: ChatViewProps) {
           },
         })
       : null;
-  const composerBannerItems = useMemo<
-    Array<ComposerBannerStackItem | ComposerBannerStackContent>
-  >(() => {
+  const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
-    // The background-work banner owns the Stop affordance, so it leads the strip.
-    const backgroundWorkItems = [
-      goalBannerItem,
-      backgroundWorkBannerItem,
-      subagentStripItem,
-    ].filter((item) => item !== null);
+    const backgroundWorkItems = [goalBannerItem, backgroundWorkBannerItem].filter(
+      (item) => item !== null,
+    );
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
@@ -7884,7 +7870,6 @@ export default function ChatView(props: ChatViewProps) {
     localCheckoutBranchMismatch,
     projectCloneBannerItem,
     showBranchMismatchBanner,
-    subagentStripItem,
     systemComposerBannerItems,
     usageLimitsBanner,
   ]);
@@ -11673,6 +11658,7 @@ export default function ChatView(props: ChatViewProps) {
                                 ) : null
                               }
                               bannerItems={composerBannerItems}
+                              subagentStrip={subagentStripContent}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}
                               onToggleKeepFullHistory={toggleKeepFullHistory}

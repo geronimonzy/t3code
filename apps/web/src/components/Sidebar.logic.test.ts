@@ -61,6 +61,7 @@ import {
   resolveSidebarDropVerb,
   deriveSidebarSubagentRows,
   sidebarSubagentLifecycles,
+  sidebarThreadMascotState,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
@@ -2378,5 +2379,18 @@ describe("deriveSidebarSubagentRows", () => {
     expect(sidebarSubagentLifecycles([child("a", "running", "2026-10-08T00:00:01.000Z")])).toEqual([
       { id: `${environmentId}:a`, status: "running" },
     ]);
+  });
+});
+
+describe("sidebarThreadMascotState", () => {
+  it("maps live statuses to mascots and keeps icons for statuses that need attention", () => {
+    expect(sidebarThreadMascotState("working", "working")).toBe("working");
+    expect(sidebarThreadMascotState("approval", "approval")).toBe("input");
+    expect(sidebarThreadMascotState("input", "input")).toBe("input");
+    expect(sidebarThreadMascotState("ready", "done")).toBe("done");
+    expect(sidebarThreadMascotState("waiting", null)).toBe("idle");
+    expect(sidebarThreadMascotState("failed", "failed")).toBeNull();
+    expect(sidebarThreadMascotState("ready", "woke")).toBeNull();
+    expect(sidebarThreadMascotState("ready", null)).toBeNull();
   });
 });

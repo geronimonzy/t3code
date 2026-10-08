@@ -3,10 +3,17 @@ import type {
   OrchestrationV2ThreadProjection,
   ThreadId,
 } from "@t3tools/contracts";
-import { CheckIcon, CircleSlashIcon, CircleXIcon, UsersIcon } from "lucide-react";
+import {
+  CheckIcon,
+  CircleSlashIcon,
+  CircleXIcon,
+  MessageCircleQuestionIcon,
+  UsersIcon,
+} from "lucide-react";
 import { useMemo } from "react";
 
 import { cn } from "~/lib/utils";
+import { Mascot } from "../../mascot/Mascot";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerBanner } from "./ComposerBanner";
 import { useLingeringSubagentIds } from "../../hooks/useLingeringSubagentIds";
@@ -39,6 +46,7 @@ export function useComposerSubagentStrip(
 
 export const SUBAGENT_STATE_LABEL = {
   working: "Working",
+  input: "Needs input",
   done: "Done",
   failed: "Failed",
   stopped: "Stopped",
@@ -46,6 +54,7 @@ export const SUBAGENT_STATE_LABEL = {
 
 export const SUBAGENT_STATE_TONE = {
   working: "text-muted-foreground",
+  input: "text-needs-input",
   done: "text-success",
   failed: "text-destructive",
   stopped: "text-muted-foreground",
@@ -172,6 +181,13 @@ export function SubagentStateIcon(props: { readonly state: SubagentStripChip["st
           <ComposerBanner.Dot className="animate-status-pulse text-foreground" />
         </span>
       );
+    case "input":
+      return (
+        <MessageCircleQuestionIcon
+          className={cn("size-3 flex-none", SUBAGENT_STATE_TONE.input)}
+          aria-hidden="true"
+        />
+      );
     case "done":
       return <CheckIcon className="size-3 flex-none text-success" aria-hidden="true" />;
     case "failed":
@@ -183,44 +199,8 @@ export function SubagentStateIcon(props: { readonly state: SubagentStripChip["st
   }
 }
 
-/**
- * A static pixel Claude. It hops once when it appears and jumps once when it
- * finishes; the changing animation name is what replays it, and nothing loops.
- */
+/** The chip's mascot: its state's chosen animation, dimmed when the work failed or stopped. */
 export function SubagentMascot(props: { readonly state: SubagentStripChip["state"] }) {
-  const settled = props.state !== "working";
-  return (
-    <svg
-      viewBox="0 0 13 8"
-      className={cn(
-        "h-3 w-5 flex-none",
-        settled ? "motion-safe:animate-subagent-jump" : "motion-safe:animate-subagent-hop",
-        (props.state === "failed" || props.state === "stopped") && "opacity-50 grayscale",
-      )}
-      shapeRendering="crispEdges"
-      aria-hidden="true"
-    >
-      <g className="fill-[#d97757]">
-        <rect x="2" y="0" width="9" height="5" />
-        <rect x="0" y="2" width="2" height="2" />
-        <rect x="11" y="2" width="2" height="2" />
-        <rect x="3" y="5" width="1" height="2" />
-        <rect x="5" y="5" width="1" height="2" />
-        <rect x="7" y="5" width="1" height="2" />
-        <rect x="9" y="5" width="1" height="2" />
-      </g>
-      {props.state === "done" ? (
-        // Happy closed eyes.
-        <g className="fill-black">
-          <rect x="3" y="2" width="2" height="1" />
-          <rect x="8" y="2" width="2" height="1" />
-        </g>
-      ) : (
-        <g className="fill-black">
-          <rect x="4" y="1" width="1" height="2" />
-          <rect x="8" y="1" width="1" height="2" />
-        </g>
-      )}
-    </svg>
-  );
+  const muted = props.state === "failed" || props.state === "stopped";
+  return <Mascot state={muted ? "idle" : props.state} muted={muted} />;
 }

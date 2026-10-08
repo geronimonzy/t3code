@@ -36,6 +36,7 @@ import {
   type SubagentLifecycle,
   type SubagentStripChipState,
 } from "./chat/ComposerSubagentStrip.logic";
+import type { MascotState } from "../mascot/mascotAnimations";
 import { cn } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
@@ -1530,4 +1531,20 @@ export function deriveSidebarSubagentRows(
         .map(({ createdAt: _createdAt, ...row }) => row),
     ]),
   );
+}
+
+/**
+ * Which mascot a thread row shows for its status, or null to keep the icon.
+ * Failure, limits and wakes keep their icons: those need attention, not a mascot.
+ */
+export function sidebarThreadMascotState(
+  status: SidebarThreadStatus,
+  icon: "working" | "input" | "approval" | "failed" | "done" | "woke" | null,
+): MascotState | null {
+  if (icon === "working") return "working";
+  if (icon === "input" || icon === "approval") return "input";
+  if (icon === "done") return "done";
+  // Waiting on background work has no icon; it reads as a calm, idle mascot.
+  if (status === "waiting") return "idle";
+  return null;
 }

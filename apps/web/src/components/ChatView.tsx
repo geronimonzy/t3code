@@ -488,7 +488,7 @@ import {
 import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ComposerSubagentStrip, useComposerSubagentStrip } from "./chat/ComposerSubagentStrip";
-import { useSubagentMascotsPreference } from "../subagentStripPreferences";
+import { useMascotsPreference } from "../mascot/mascotPreferences";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
 import { formatRelativeTimeLabel, formatRelativeTimeUntilLabel } from "../timestampFormat";
 import { ComposerSurface } from "./chat/ComposerSurface";
@@ -7605,7 +7605,7 @@ export default function ChatView(props: ChatViewProps) {
     isStoppingBackgroundWork,
     onOpenRelatedThread,
   ]);
-  const [subagentMascots] = useSubagentMascotsPreference();
+  const [subagentMascots] = useMascotsPreference();
   const subagentStrip = useComposerSubagentStrip(
     serverProjection,
     `${environmentId}:${activeThreadId}`,

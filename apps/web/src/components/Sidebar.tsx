@@ -184,6 +184,7 @@ import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
   deriveSidebarSubagentRows,
+  sidebarThreadMascotState,
   sidebarSubagentLifecycles,
   type SidebarSubagentRow,
   buildBulkTitleRegenerationContextMenuItem,
@@ -236,8 +237,9 @@ import {
 } from "./Sidebar.drag";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 import { SidebarSubagentRows } from "./SidebarSubagentRows";
+import { Mascot } from "../mascot/Mascot";
 import { useLingeringSubagentIds } from "../hooks/useLingeringSubagentIds";
-import { useSubagentMascotsPreference } from "../subagentStripPreferences";
+import { useMascotsPreference } from "../mascot/mascotPreferences";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import {
   ThreadPullRequestBadgeControl,
@@ -1112,6 +1114,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
   /** Live subagents nested under this row. */
   subagentRows: ReadonlyArray<SidebarSubagentRow>;
+  /** Pixel mascots for this row's status and its subagents. */
   subagentMascots: boolean;
   variant: "card" | "slim";
   // Settled rows un-settle, snoozed rows wake, and cards settle.
@@ -1356,6 +1359,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       }
                     : null;
   const isWokeStatus = topStatus?.icon === "woke";
+  const threadMascotState = sidebarThreadMascotState(status, topStatus?.icon ?? null);
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
@@ -2072,7 +2076,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             topStatus.className,
                           )}
                         >
-                          {topStatus.icon === "working" ? (
+                          {props.subagentMascots && threadMascotState !== null ? (
+                            <Mascot state={threadMascotState} className="h-3.5" />
+                          ) : topStatus.icon === "working" ? (
                             <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
                           ) : topStatus.icon === "input" ? (
                             <MessageCircleQuestionIcon aria-hidden className="size-4 shrink-0" />
@@ -2406,7 +2412,7 @@ export default function Sidebar() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   // Live subagents nest under their parent row; finished ones linger briefly as done.
-  const [subagentMascots] = useSubagentMascotsPreference();
+  const [subagentMascots] = useMascotsPreference();
   const subagentLifecycles = useMemo(() => sidebarSubagentLifecycles(threads), [threads]);
   const lingeringSubagentKeys = useLingeringSubagentIds(subagentLifecycles, "sidebar");
   const subagentRowsByParentKey = useMemo(

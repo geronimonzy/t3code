@@ -12,7 +12,7 @@ import * as DateTime from "effect/DateTime";
 export const SUBAGENT_STRIP_DONE_LINGER_MS = 5_000;
 export const SUBAGENT_STRIP_MAX_VISIBLE = 3;
 
-export type SubagentStripChipState = "working" | "done" | "failed" | "stopped";
+export type SubagentStripChipState = "working" | "input" | "done" | "failed" | "stopped";
 
 export interface SubagentStripChip {
   readonly id: string;
@@ -31,6 +31,8 @@ export interface SubagentStrip {
 export function subagentChipState(
   status: OrchestrationV2Subagent["status"],
 ): SubagentStripChipState {
+  // Waiting means the agent needs the user, e.g. an approval.
+  if (status === "waiting") return "input";
   if (isActiveSubagentStatus(status)) return "working";
   if (status === "completed" || status === "idle") return "done";
   if (status === "failed") return "failed";
@@ -174,7 +176,7 @@ export function deriveSubagentStrip(
   let workingCount = 0;
   for (const subagent of shown) {
     const state = subagentChipState(subagent.status);
-    if (state === "working") workingCount += 1;
+    if (isActiveSubagentStatus(subagent.status)) workingCount += 1;
     const progress = subagent.progress?.trim();
     chips.push({
       id: subagent.id,

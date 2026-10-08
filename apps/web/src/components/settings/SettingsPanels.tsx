@@ -138,8 +138,9 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { useSubagentMascotsPreference } from "../../subagentStripPreferences";
+import { useMascotsPreference } from "../../mascot/mascotPreferences";
 import { ScopedSwitch } from "./ScopedSwitch";
+import { MascotAnimationPicker } from "./MascotAnimationPicker";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -1163,7 +1164,7 @@ export function AppearanceSettingsPanel() {
   } = useTheme();
   const customThemes = useCustomThemes();
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
-  const [subagentMascots, setSubagentMascots] = useSubagentMascotsPreference();
+  const [subagentMascots, setSubagentMascots] = useMascotsPreference();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const environmentStageLabel = useEnvironmentStageLabel();
@@ -1428,7 +1429,7 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("subagent-mascots")}
-          description="Show running subagents above the composer as tiny pixel Claudes."
+          description="Show agent status as tiny pixel Claudes: thread rows, subagents in the sidebar, and the strip above the composer."
           resetAction={
             !subagentMascots ? (
               <SettingResetButton
@@ -1441,10 +1442,18 @@ export function AppearanceSettingsPanel() {
             <Switch
               checked={subagentMascots}
               onCheckedChange={(checked) => setSubagentMascots(Boolean(checked))}
-              aria-label="Show subagents as pixel mascots"
+              aria-label="Show agents as pixel mascots"
             />
           }
         />
+
+        {subagentMascots ? (
+          <SettingsRow
+            {...searchableSetting("mascot-animations")}
+            description="Pick an animation for each state. Click a preview to replay it."
+            control={<MascotAnimationPicker />}
+          />
+        ) : null}
 
         <SettingsRow
           {...searchableSetting("chat-width")}

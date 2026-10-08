@@ -1,5 +1,8 @@
-import type { OrchestrationV2ThreadProjection, ThreadId } from "@t3tools/contracts";
-import { deriveThreadTurnSubagents } from "@t3tools/client-runtime/state/thread-subagents";
+import type {
+  OrchestrationV2Subagent,
+  OrchestrationV2ThreadProjection,
+  ThreadId,
+} from "@t3tools/contracts";
 import { CheckIcon, CircleSlashIcon, CircleXIcon, UsersIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -11,12 +14,14 @@ import {
   expireSubagentStripPhase,
   lingeringSubagentIds,
   NO_SUBAGENT_STRIP_PHASES,
-  observeSubagentStripTurn,
+  observeSubagentStrip,
   SUBAGENT_STRIP_DONE_LINGER_MS,
   type SubagentStripPhases,
   type SubagentStrip,
   type SubagentStripChip,
 } from "./ComposerSubagentStrip.logic";
+
+const NO_SUBAGENTS: ReadonlyArray<OrchestrationV2Subagent> = [];
 
 interface TrackedPhases {
   readonly threadKey: string;
@@ -28,15 +33,10 @@ interface TrackedPhases {
  * Agents seen finishing stay for a moment as "done" chips before they leave.
  */
 export function useComposerSubagentStrip(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "subagents"> | null,
+  projection: Pick<OrchestrationV2ThreadProjection, "subagents"> | null,
   threadKey: string,
 ): SubagentStrip | null {
-  const runs = projection?.runs;
-  const subagents = projection?.subagents;
-  const turn = useMemo(
-    () => (runs && subagents ? deriveThreadTurnSubagents({ runs, subagents }) : null),
-    [runs, subagents],
-  );
+  const subagents = projection?.subagents ?? NO_SUBAGENTS;
   const [tracked, setTracked] = useState<TrackedPhases>({
     threadKey,
     phases: NO_SUBAGENT_STRIP_PHASES,
@@ -44,7 +44,7 @@ export function useComposerSubagentStrip(
   const trackedPhases = tracked.threadKey === threadKey ? tracked.phases : NO_SUBAGENT_STRIP_PHASES;
   // Folded in during render, so a finished agent keeps its chip from the first
   // frame its status flips instead of blinking out for one paint.
-  const phases = observeSubagentStripTurn(trackedPhases, turn);
+  const phases = observeSubagentStrip(trackedPhases, subagents);
   if (phases !== trackedPhases) setTracked({ threadKey, phases });
 
   // One timer per settling agent. Resuming clears it, so settling again restarts the linger.
@@ -80,7 +80,10 @@ export function useComposerSubagentStrip(
     };
   }, []);
 
-  return useMemo(() => deriveSubagentStrip(turn, lingeringSubagentIds(phases)), [turn, phases]);
+  return useMemo(
+    () => deriveSubagentStrip(subagents, lingeringSubagentIds(phases)),
+    [subagents, phases],
+  );
 }
 
 const STATE_LABEL = {

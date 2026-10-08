@@ -1,7 +1,7 @@
 import type { OrchestrationV2Subagent, ThreadId } from "@t3tools/contracts";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { isActiveSubagentStatus } from "@t3tools/client-runtime/state/subagentRuntime";
-import type { ThreadTurnSubagents } from "@t3tools/client-runtime/state/thread-subagents";
+import * as DateTime from "effect/DateTime";
 
 /** How long a finished chip stays in the strip before it leaves. */
 export const SUBAGENT_STRIP_DONE_LINGER_MS = 3_000;
@@ -50,12 +50,12 @@ export const NO_SUBAGENT_STRIP_PHASES: SubagentStripPhases = new Map();
  * Folds the latest roster into the tracked phases, returning the same map
  * when nothing changed.
  */
-export function observeSubagentStripTurn(
+export function observeSubagentStrip(
   phases: SubagentStripPhases,
-  turn: ThreadTurnSubagents | null,
+  subagents: ReadonlyArray<OrchestrationV2Subagent>,
 ): SubagentStripPhases {
   let next: Map<string, SubagentStripPhase> | null = null;
-  for (const subagent of turn?.subagents ?? []) {
+  for (const subagent of subagents) {
     const phase = phases.get(subagent.id);
     if (isActiveSubagentStatus(subagent.status)) {
       if (phase === "working") continue;
@@ -91,22 +91,31 @@ export function lingeringSubagentIds(phases: SubagentStripPhases): ReadonlySet<s
   return ids;
 }
 
+function spawnOrder(left: OrchestrationV2Subagent, right: OrchestrationV2Subagent): number {
+  const at = (subagent: OrchestrationV2Subagent) =>
+    DateTime.toEpochMillis(subagent.startedAt ?? subagent.updatedAt);
+  return at(left) - at(right) || left.id.localeCompare(right.id);
+}
+
 /**
- * The strip for one turn: working agents plus recently settled ones, in spawn
- * order so chips never reshuffle. Null hides the strip.
+ * The strip for a thread: working agents plus recently settled ones, in spawn
+ * order so chips never reshuffle. Deliberately not scoped to the active run:
+ * each background agent that finishes wakes the parent into a new run, and a
+ * run-scoped strip would vanish for every wake. Null hides the strip.
  */
 export function deriveSubagentStrip(
-  turn: ThreadTurnSubagents | null,
+  subagents: ReadonlyArray<OrchestrationV2Subagent>,
   lingeringIds: ReadonlySet<string>,
   maxVisible = SUBAGENT_STRIP_MAX_VISIBLE,
 ): SubagentStrip | null {
-  if (turn === null) return null;
+  const shown = subagents
+    .filter((subagent) => isActiveSubagentStatus(subagent.status) || lingeringIds.has(subagent.id))
+    .toSorted(spawnOrder);
   const chips: SubagentStripChip[] = [];
   let workingCount = 0;
-  for (const subagent of turn.subagents) {
+  for (const subagent of shown) {
     const state = chipState(subagent.status);
     if (state === "working") workingCount += 1;
-    else if (!lingeringIds.has(subagent.id)) continue;
     const progress = subagent.progress?.trim();
     chips.push({
       id: subagent.id,

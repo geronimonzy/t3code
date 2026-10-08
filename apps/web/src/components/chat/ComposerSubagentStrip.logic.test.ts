@@ -7,7 +7,6 @@ import {
   ThreadId,
   type OrchestrationV2Subagent,
 } from "@t3tools/contracts";
-import { deriveThreadTurnSubagents } from "@t3tools/client-runtime/state/thread-subagents";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -15,7 +14,7 @@ import {
   expireSubagentStripPhase,
   lingeringSubagentIds,
   NO_SUBAGENT_STRIP_PHASES,
-  observeSubagentStripTurn,
+  observeSubagentStrip,
 } from "./ComposerSubagentStrip.logic";
 
 function subagent(
@@ -47,15 +46,11 @@ function subagent(
   };
 }
 
-const activeRun = { id: RunId.make("run-1"), status: "running" } as never;
-
-function turnOf(...subagents: OrchestrationV2Subagent[]) {
-  return deriveThreadTurnSubagents({ runs: [activeRun], subagents });
-}
+const turnOf = (...subagents: OrchestrationV2Subagent[]) => subagents;
 
 describe("deriveSubagentStrip", () => {
   it("is hidden when no subagent is working or lingering", () => {
-    expect(deriveSubagentStrip(null, new Set())).toBeNull();
+    expect(deriveSubagentStrip([], new Set())).toBeNull();
     expect(deriveSubagentStrip(turnOf(subagent("a", { status: "completed" })), new Set())).toBe(
       null,
     );
@@ -94,6 +89,16 @@ describe("deriveSubagentStrip", () => {
     ]);
   });
 
+  it("keeps agents from earlier runs while the parent runs a wake turn", () => {
+    // Each finished background agent wakes the parent into a new run; the
+    // strip must not drop the agents still working from the run that spawned them.
+    const strip = deriveSubagentStrip(
+      [subagent("a"), subagent("b", { runId: RunId.make("run-2") })],
+      new Set(),
+    );
+    expect(strip?.visible.map((chip) => chip.id)).toEqual(["a", "b"]);
+  });
+
   it("falls back to the prompt's first line when the agent has no title", () => {
     const strip = deriveSubagentStrip(
       turnOf(subagent("a", { title: null, prompt: "Find the bug\nthen fix it" })),
@@ -115,7 +120,7 @@ describe("deriveSubagentStrip", () => {
 
 describe("subagent strip phases", () => {
   it("keeps a just-finished agent's chip before the tracker catches up", () => {
-    const working = observeSubagentStripTurn(
+    const working = observeSubagentStrip(
       NO_SUBAGENT_STRIP_PHASES,
       turnOf(subagent("a"), subagent("b")),
     );
@@ -129,31 +134,31 @@ describe("subagent strip phases", () => {
   });
 
   it("lingers settled agents until they expire, then drops them", () => {
-    const working = observeSubagentStripTurn(NO_SUBAGENT_STRIP_PHASES, turnOf(subagent("a")));
+    const working = observeSubagentStrip(NO_SUBAGENT_STRIP_PHASES, turnOf(subagent("a")));
     const done = turnOf(subagent("a", { status: "completed" }));
-    const settling = observeSubagentStripTurn(working, done);
+    const settling = observeSubagentStrip(working, done);
     expect(settling.get("a")).toBe("settling");
     expect(deriveSubagentStrip(done, lingeringSubagentIds(settling))).not.toBeNull();
 
     const expired = expireSubagentStripPhase(settling, "a");
     expect(deriveSubagentStrip(done, lingeringSubagentIds(expired))).toBeNull();
     // Observing the same roster again keeps the same map, so nothing re-renders.
-    expect(observeSubagentStripTurn(expired, done)).toBe(expired);
+    expect(observeSubagentStrip(expired, done)).toBe(expired);
   });
 
   it("does not expire an agent that resumed working", () => {
-    const settling = observeSubagentStripTurn(
-      observeSubagentStripTurn(NO_SUBAGENT_STRIP_PHASES, turnOf(subagent("a"))),
+    const settling = observeSubagentStrip(
+      observeSubagentStrip(NO_SUBAGENT_STRIP_PHASES, turnOf(subagent("a"))),
       turnOf(subagent("a", { status: "idle" })),
     );
-    const resumed = observeSubagentStripTurn(settling, turnOf(subagent("a")));
+    const resumed = observeSubagentStrip(settling, turnOf(subagent("a")));
     expect(resumed.get("a")).toBe("working");
     expect(expireSubagentStripPhase(resumed, "a")).toBe(resumed);
   });
 
   it("never tracks agents that were already settled when first seen", () => {
     const opened = turnOf(subagent("a", { status: "completed" }));
-    const observed = observeSubagentStripTurn(NO_SUBAGENT_STRIP_PHASES, opened);
+    const observed = observeSubagentStrip(NO_SUBAGENT_STRIP_PHASES, opened);
     expect(observed).toBe(NO_SUBAGENT_STRIP_PHASES);
     expect(deriveSubagentStrip(opened, lingeringSubagentIds(observed))).toBeNull();
   });

@@ -218,6 +218,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
      compositor updates discrete frames instead of every vsync. */
   --animate-status-pulse: status-pulse 2s infinite;
   --animate-status-ping: status-ping 2s infinite;
+  /* One-shot subagent mascot motion: played once per state change, never looped. */
+  --animate-subagent-hop: subagent-hop 360ms ease-out;
+  --animate-subagent-jump: subagent-jump 560ms ease-out;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);
@@ -327,6 +330,28 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     100% {
       opacity: 0;
       scale: 2;
+    }
+  }
+  @keyframes subagent-hop {
+    0%,
+    100% {
+      translate: 0 0;
+    }
+    50% {
+      translate: 0 -2px;
+    }
+  }
+  @keyframes subagent-jump {
+    0%,
+    70%,
+    100% {
+      translate: 0 0;
+    }
+    35% {
+      translate: 0 -4px;
+    }
+    85% {
+      translate: 0 -1px;
     }
   }
 }

@@ -486,7 +486,12 @@ import {
   type EditQueuedRunRequest,
 } from "./chat/QueuedRunsControl";
 import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
-import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import type {
+  ComposerBannerStackContent,
+  ComposerBannerStackItem,
+} from "./chat/ComposerBannerStack";
+import { ComposerSubagentStrip, useComposerSubagentStrip } from "./chat/ComposerSubagentStrip";
+import { useSubagentMascotsPreference } from "../subagentStripPreferences";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
 import { formatRelativeTimeLabel, formatRelativeTimeUntilLabel } from "../timestampFormat";
 import { ComposerSurface } from "./chat/ComposerSurface";
@@ -7603,6 +7608,29 @@ export default function ChatView(props: ChatViewProps) {
     isStoppingBackgroundWork,
     onOpenRelatedThread,
   ]);
+  const [subagentMascots] = useSubagentMascotsPreference();
+  const subagentStrip = useComposerSubagentStrip(
+    serverProjection,
+    `${environmentId}:${activeThreadId}`,
+  );
+  const subagentStripItem = useMemo<ComposerBannerStackContent | null>(
+    () =>
+      subagentStrip === null
+        ? null
+        : {
+            id: "subagent-strip",
+            variant: "default",
+            priority: "activity",
+            content: (
+              <ComposerSubagentStrip
+                strip={subagentStrip}
+                mascots={subagentMascots}
+                onOpenThread={onOpenRelatedThread}
+              />
+            ),
+          },
+    [onOpenRelatedThread, subagentMascots, subagentStrip],
+  );
   // Settled, snoozed, and woke are thread state, not composer actions: each
   // gets one quiet line after the last message instead of a banner. A woken
   // thread announces itself here, not just in the sidebar pill. Dismissing
@@ -7773,11 +7801,16 @@ export default function ChatView(props: ChatViewProps) {
           },
         })
       : null;
-  const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+  const composerBannerItems = useMemo<
+    Array<ComposerBannerStackItem | ComposerBannerStackContent>
+  >(() => {
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
-    const backgroundWorkItems = [goalBannerItem, backgroundWorkBannerItem].filter(
-      (item) => item !== null,
-    );
+    // The background-work banner owns the Stop affordance, so it leads the strip.
+    const backgroundWorkItems = [
+      goalBannerItem,
+      backgroundWorkBannerItem,
+      subagentStripItem,
+    ].filter((item) => item !== null);
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
@@ -7851,6 +7884,7 @@ export default function ChatView(props: ChatViewProps) {
     localCheckoutBranchMismatch,
     projectCloneBannerItem,
     showBranchMismatchBanner,
+    subagentStripItem,
     systemComposerBannerItems,
     usageLimitsBanner,
   ]);

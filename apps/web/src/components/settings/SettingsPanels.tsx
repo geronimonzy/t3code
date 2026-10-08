@@ -138,6 +138,7 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { useSubagentMascotsPreference } from "../../subagentStripPreferences";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -1162,6 +1163,7 @@ export function AppearanceSettingsPanel() {
   } = useTheme();
   const customThemes = useCustomThemes();
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
+  const [subagentMascots, setSubagentMascots] = useSubagentMascotsPreference();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const environmentStageLabel = useEnvironmentStageLabel();
@@ -1420,6 +1422,26 @@ export function AppearanceSettingsPanel() {
                 updateSettings({ persistComposerContextStrip: Boolean(checked) })
               }
               aria-label="Keep composer context visible in active threads"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("subagent-mascots")}
+          description="Show running subagents above the composer as tiny pixel Claudes."
+          resetAction={
+            subagentMascots ? (
+              <SettingResetButton
+                label="subagent mascots"
+                onClick={() => setSubagentMascots(false)}
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={subagentMascots}
+              onCheckedChange={(checked) => setSubagentMascots(Boolean(checked))}
+              aria-label="Show subagents as pixel mascots"
             />
           }
         />

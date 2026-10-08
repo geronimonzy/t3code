@@ -285,6 +285,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "subagent-mascots",
+    title: "Subagent mascots",
+    to: "/settings/appearance",
+    searchTerms: ["claude pixel agents strip composer fun"],
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

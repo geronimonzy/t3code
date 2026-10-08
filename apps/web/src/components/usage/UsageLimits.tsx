@@ -20,6 +20,8 @@ import {
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
+import { cn } from "~/lib/utils";
+
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
@@ -80,14 +82,17 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
  * window the clock is, which is also where even spending would have put the
  * fill. Hover for the exact figures and reset time.
  */
-function WindowBar({
+export function WindowBar({
   color,
   window,
   now,
+  compact = false,
 }: {
   readonly color: string;
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
+  /** A slimmer bar for narrow spaces like the sidebar. */
+  readonly compact?: boolean;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
@@ -110,21 +115,32 @@ function WindowBar({
             role="img"
             aria-label={summary}
             tabIndex={0}
-            className="relative h-6 cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className={cn(
+              "relative cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+              compact ? "h-2.5" : "h-6",
+            )}
           />
         }
       >
-        <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
+        <div
+          className={cn(
+            "absolute inset-x-0 rounded-full bg-muted",
+            compact ? "inset-y-0.5" : "inset-y-1.5",
+          )}
+        />
         {remaining > 0 ? (
           <div
-            className="absolute inset-y-1.5 left-0 rounded-full"
+            className={cn("absolute left-0 rounded-full", compact ? "inset-y-0.5" : "inset-y-1.5")}
             style={{ width: `${remaining}%`, backgroundColor: color }}
           />
         ) : null}
         {timeLeft !== null ? (
           <span
             aria-hidden
-            className="absolute inset-y-0.5 w-px -translate-x-1/2 bg-foreground/60"
+            className={cn(
+              "absolute w-px -translate-x-1/2 bg-foreground/60",
+              compact ? "inset-y-0" : "inset-y-0.5",
+            )}
             style={{ left: `${timeLeft}%` }}
           />
         ) : null}

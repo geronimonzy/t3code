@@ -230,6 +230,13 @@ import {
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
+import {
+  createWorkEntryRevealStore,
+  useWorkEntryReveal,
+  useWorkEntryRevealKey,
+  type WorkEntryRevealRequest,
+  type WorkEntryRevealStore,
+} from "./useWorkEntryReveal";
 import { readThreadFindPosition } from "./threadFindPosition";
 import type { ThreadFindPositionReader } from "./threadFind";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
@@ -361,6 +368,7 @@ interface TimelineRowSharedState {
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   workGroupViewState: WorkGroupViewState;
+  workEntryReveals: WorkEntryRevealStore;
 }
 
 interface TimelineRowActivityState {
@@ -449,6 +457,8 @@ export interface MessagesTimelineHistoryControls {
 interface MessagesTimelineProps {
   citationRequest?: AssistantCitationRequest | null;
   citationHistoryLoading?: boolean;
+  /** Scrolls to a tool call row and expands it, such as the one that started a monitor. */
+  toolCallReveal?: WorkEntryRevealRequest | null;
   onCiteAssistantText?: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -565,6 +575,7 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
 
 const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
+  toolCallReveal = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
   isWorking,
@@ -683,6 +694,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       },
     [listIdentityKey, rememberedPosition],
   );
+  const [workEntryReveals] = useState(createWorkEntryRevealStore);
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
@@ -1335,6 +1347,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
       onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
       workGroupViewState,
+      workEntryReveals,
     }),
     [
       readyCitationRequest,
@@ -1373,6 +1386,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onWorktreeSetupWorkLocally,
       onOpenWorktreeSetupTerminal,
       workGroupViewState,
+      workEntryReveals,
     ],
   );
   const compactionAwaitingRow =
@@ -1524,6 +1538,42 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rowIndex: activeFindMatch ? rows.findIndex((row) => row.id === activeFindMatch.entryId) : -1,
     listRef,
     contentInsetEndAdjustment,
+  });
+
+  const revealFoldRunIds = useCallback(
+    () =>
+      timelineTurnFoldRunIdsByEntryId({
+        timelineEntries,
+        latestRun,
+        runningRunId,
+        isWorking,
+        runlessWorkActive,
+      }),
+    [timelineEntries, latestRun, runningRunId, isWorking, runlessWorkActive],
+  );
+  const expandRevealedAttempt = useCallback((attemptId: RunAttemptId) => {
+    setExpandedAttemptIds((current) =>
+      current.has(attemptId) ? current : new Set(current).add(attemptId),
+    );
+  }, []);
+  const expandRevealedWorkGroup = useCallback((groupId: string) => {
+    setExpandedWorkGroupIds((current) =>
+      current.has(groupId) ? current : new Set(current).add(groupId),
+    );
+  }, []);
+  useWorkEntryReveal({
+    request: toolCallReveal,
+    entries: timelineEntries,
+    rows,
+    foldRunIds: revealFoldRunIds,
+    listRef,
+    store: workEntryReveals,
+    workGroupState: workGroupViewState,
+    animated: !prefersReducedMotion,
+    onExpandRun: expandCitedRun,
+    onExpandAttempt: expandRevealedAttempt,
+    onExpandGroup: expandRevealedWorkGroup,
+    onManualNavigation,
   });
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -3529,7 +3579,11 @@ function ExpandedWorkGroupEntries({
   entries: TimelineWorkEntry[];
   workspaceRoot: string | undefined;
 }) {
-  const { workGroupViewState: viewState, onToggleWorkEntry } = use(TimelineRowCtx);
+  const {
+    workGroupViewState: viewState,
+    onToggleWorkEntry,
+    workEntryReveals,
+  } = use(TimelineRowCtx);
   const [initialScrollIndex] = useState(() =>
     resolveWorkGroupScrollIndex(entries, viewState.scrollPositions.get(anchorKey)),
   );
@@ -3617,6 +3671,20 @@ function ExpandedWorkGroupEntries({
     ),
     [workspaceRoot],
   );
+
+  // A reveal that lands while the group is open scrolls its list to the entry;
+  // one that opened the group already mounted it there.
+  const revealKey = useWorkEntryRevealKey(workEntryReveals, (entryId) =>
+    entries.some((entry) => entry.id === entryId),
+  );
+  const seenRevealKeyRef = useRef(revealKey);
+  useEffect(() => {
+    if (revealKey === null || revealKey === seenRevealKeyRef.current) return;
+    seenRevealKeyRef.current = revealKey;
+    const entryId = workEntryReveals.get()?.entryId;
+    const index = entries.findIndex((entry) => entry.id === entryId);
+    if (index >= 0) void listRef.current?.scrollToIndex({ index, animated: false });
+  }, [entries, revealKey, workEntryReveals]);
 
   const updateExpandedContentHeight = useCallback(() => {
     const state = listRef.current?.getState();
@@ -5396,18 +5464,25 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? notificationChildThreadId(workEntry.projectedItem.item.source)
       : undefined;
   const groupView = use(WorkGroupViewCtx);
-  const [expanded, setExpanded] = useState(
-    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
+  // Standalone rows keep their disclosure in the timeline's state too, so a
+  // revealed call stays open when it scrolls out of view and back.
+  const expandedEntries = (groupView?.state ?? ctx.workGroupViewState).expandedEntries;
+  const [expanded, setExpanded] = useState(() => expandedEntries.has(workEntry.id));
+  const revealKey = useWorkEntryRevealKey(
+    ctx.workEntryReveals,
+    (entryId) => entryId === workEntry.id,
   );
+  const [seenRevealKey, setSeenRevealKey] = useState(revealKey);
+  if (revealKey !== seenRevealKey) {
+    setSeenRevealKey(revealKey);
+    if (revealKey !== null) setExpanded(true);
+  }
   const toggleExpanded = () => {
     const next = !expanded;
-    if (groupView) {
-      groupView.onToggleEntry(!next);
-      if (next) groupView.state.expandedEntries.add(workEntry.id);
-      else groupView.state.expandedEntries.delete(workEntry.id);
-    } else {
-      props.onToggleEntry?.(!next);
-    }
+    if (groupView) groupView.onToggleEntry(!next);
+    else props.onToggleEntry?.(!next);
+    if (next) expandedEntries.add(workEntry.id);
+    else expandedEntries.delete(workEntry.id);
     setExpanded(next);
   };
   const failureItem = workEntry.projectedItem?.item;

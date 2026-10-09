@@ -441,6 +441,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
+import type { WorkEntryRevealRequest } from "./chat/useWorkEntryReveal";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
@@ -7542,6 +7543,11 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [activeGoal, activeThread, isWorking, sendStandaloneCommand]);
 
+  // The banner names a monitor; its name jumps to the tool call that started it.
+  const [toolCallReveal, setToolCallReveal] = useState<WorkEntryRevealRequest | null>(null);
+  const revealToolCall = useCallback((entryId: string) => {
+    setToolCallReveal((previous) => ({ entryId, key: (previous?.key ?? 0) + 1 }));
+  }, []);
   const backgroundWorkBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     const presentation = presentPendingBackgroundWork(activeBackgroundTasks);
     if (presentation === null || !activeThread) {
@@ -7563,18 +7569,18 @@ export default function ChatView(props: ChatViewProps) {
         />
       ),
       title: presentation.title,
-      // A single named item is already in the title.
+      // A single named item is already in the title, unless it links somewhere.
       description:
-        presentation.items.length === 1 && presentation.items[0]?.childThreadId === undefined
+        presentation.items.length === 1 &&
+        presentation.items[0]?.childThreadId === undefined &&
+        presentation.items[0]?.toolCallItemId === undefined
           ? undefined
           : presentation.items.map((item, index) => {
-              const childThreadId = item.childThreadId;
+              const { childThreadId, toolCallItemId } = item;
               return (
                 <Fragment key={item.taskId}>
                   {index > 0 ? ", " : null}
-                  {childThreadId === undefined ? (
-                    item.label
-                  ) : (
+                  {childThreadId !== undefined ? (
                     <InlineButton
                       tone="muted"
                       aria-label={`Open subagent ${item.label}`}
@@ -7582,6 +7588,16 @@ export default function ChatView(props: ChatViewProps) {
                     >
                       {item.label}
                     </InlineButton>
+                  ) : toolCallItemId !== undefined ? (
+                    <InlineButton
+                      tone="muted"
+                      aria-label={`Show the tool call for monitor ${item.label}`}
+                      onClick={() => revealToolCall(toolCallItemId)}
+                    >
+                      {item.label}
+                    </InlineButton>
+                  ) : (
+                    item.label
                   )}
                 </Fragment>
               );
@@ -7604,6 +7620,7 @@ export default function ChatView(props: ChatViewProps) {
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
     onOpenRelatedThread,
+    revealToolCall,
   ]);
   const [subagentMascots] = useMascotsPreference();
   const subagentStrip = useComposerSubagentStrip(
@@ -11381,6 +11398,7 @@ export default function ChatView(props: ChatViewProps) {
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
+                toolCallReveal={paintOnlyDisplayedTimeline ? null : toolCallReveal}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline
                   ? {

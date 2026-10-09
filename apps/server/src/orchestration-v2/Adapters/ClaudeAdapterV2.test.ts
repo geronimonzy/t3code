@@ -3807,8 +3807,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
           .pendingBackgroundTasks;
+        // The monitor points at the Monitor call's own turn item, so clients can jump to it.
+        const monitorCall = harness.events.find(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "toolu_monitor_0",
+        );
+        assert.ok(monitorCall?.type === "turn_item.updated");
         assert.deepEqual(roster, [
-          { taskId: longRunning.taskId, kind: "monitor", description: "Monitor 0" },
+          {
+            taskId: longRunning.taskId,
+            kind: "monitor",
+            toolCallItemId: monitorCall.turnItem.id,
+            description: "Monitor 0",
+          },
         ]);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),

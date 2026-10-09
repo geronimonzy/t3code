@@ -66,6 +66,7 @@ import {
   type ProviderUserInputAnswers,
   type ProviderThreadId,
   type ThreadId,
+  type TurnItemId,
 } from "@t3tools/contracts";
 
 import * as Cause from "effect/Cause";
@@ -1781,20 +1782,30 @@ function claudePendingBackgroundTask(input: {
   readonly taskId: string;
   readonly taskType: string | null;
   // Claude runs a Monitor as a local_bash task, so only the Monitor tool call
-  // that started it tells it apart from a background Bash command.
-  readonly startedByMonitor: boolean;
+  // that started it tells it apart from a background Bash command. The call's
+  // turn item lets clients jump to it.
+  readonly monitorToolCallItemId: TurnItemId | undefined;
   readonly description: string | undefined;
 }): OrchestrationV2PendingBackgroundTask {
+  const description =
+    input.description !== undefined && input.description.trim().length > 0
+      ? { description: input.description }
+      : {};
+  if (input.monitorToolCallItemId !== undefined) {
+    return {
+      taskId: input.taskId,
+      kind: "monitor",
+      toolCallItemId: input.monitorToolCallItemId,
+      ...description,
+    };
+  }
   return {
     taskId: input.taskId,
-    kind: input.startedByMonitor
-      ? "monitor"
-      : ((input.taskType === null
-          ? undefined
-          : CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS.get(input.taskType)) ?? "background_task"),
-    ...(input.description !== undefined && input.description.trim().length > 0
-      ? { description: input.description }
-      : {}),
+    kind:
+      (input.taskType === null
+        ? undefined
+        : CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS.get(input.taskType)) ?? "background_task",
+    ...description,
   };
 }
 
@@ -1833,7 +1844,7 @@ function claudePendingBackgroundTasksFromRoster(
 
 function parseClaudeBackgroundTaskEntry(
   entry: unknown,
-  monitorTasks: ReadonlyMap<string, unknown>,
+  monitorToolCallItemId: (taskId: string) => TurnItemId | undefined,
 ): OrchestrationV2PendingBackgroundTask | null {
   if (entry === null || typeof entry !== "object") {
     return null;
@@ -1853,7 +1864,7 @@ function parseClaudeBackgroundTaskEntry(
   return claudePendingBackgroundTask({
     taskId,
     taskType,
-    startedByMonitor: monitorTasks.has(taskId),
+    monitorToolCallItemId: monitorToolCallItemId(taskId),
     description: typeof description === "string" ? description : undefined,
   });
 }
@@ -3239,16 +3250,28 @@ export function makeClaudeAdapterV2(
             return { ...current, calls };
           });
         };
-        /** True when a Monitor call started this task; links the task to that call. */
-        const isClaudeMonitorTask = (input: {
+        // The Monitor call's own turn item, derived the way its tool row is.
+        const claudeToolCallItemId = (toolUseId: string) =>
+          idAllocator.derive.turnItemFromProviderItem({
+            driver: CLAUDE_PROVIDER,
+            nativeItemId: toolUseId,
+          });
+        /**
+         * The turn item of the Monitor call that started this task, if one did;
+         * links the task to that call.
+         */
+        const claudeMonitorToolCallItemId = (input: {
           readonly nativeThreadId: string;
           readonly taskId: string;
           readonly toolUseId: string | undefined;
         }) =>
           Ref.modify(claudeMonitors, (current) => {
-            if (current.tasks.has(input.taskId)) return [true, current] as const;
+            const linked = current.tasks.get(input.taskId);
+            if (linked !== undefined) {
+              return [claudeToolCallItemId(linked.toolUseId), current] as const;
+            }
             if (input.toolUseId === undefined || !current.calls.has(input.toolUseId)) {
-              return [false, current] as const;
+              return [undefined, current] as const;
             }
             const calls = new Set(current.calls);
             calls.delete(input.toolUseId);
@@ -3256,7 +3279,7 @@ export function makeClaudeAdapterV2(
               toolUseId: input.toolUseId,
               nativeThreadId: input.nativeThreadId,
             });
-            return [true, { calls, tasks }] as const;
+            return [claudeToolCallItemId(input.toolUseId), { calls, tasks }] as const;
           });
         /** Drops monitor tasks that ended: gone from the thread's roster, or notified. */
         const endClaudeMonitorTasks = (
@@ -5548,7 +5571,10 @@ export function makeClaudeAdapterV2(
                 task.nativeThreadId === input.nativeThreadId && !listedTaskIds.has(taskId),
             );
             for (const entry of roster) {
-              const task = parseClaudeBackgroundTaskEntry(entry, monitorTasks);
+              const task = parseClaudeBackgroundTaskEntry(entry, (taskId) => {
+                const monitor = monitorTasks.get(taskId);
+                return monitor === undefined ? undefined : claudeToolCallItemId(monitor.toolUseId);
+              });
               if (task !== null) {
                 nextTasks.push(task);
               }
@@ -5570,7 +5596,7 @@ export function makeClaudeAdapterV2(
               claudePendingBackgroundTask({
                 taskId: message.task_id,
                 taskType: claudeTaskTypeFromSdkMessage(message),
-                startedByMonitor: yield* isClaudeMonitorTask({
+                monitorToolCallItemId: yield* claudeMonitorToolCallItemId({
                   nativeThreadId: input.nativeThreadId,
                   taskId: message.task_id,
                   toolUseId: message.tool_use_id,

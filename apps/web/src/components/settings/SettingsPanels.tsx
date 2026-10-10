@@ -1448,11 +1448,18 @@ export function AppearanceSettingsPanel() {
         />
 
         {subagentMascots ? (
-          <SettingsRow
-            {...searchableSetting("mascot-animations")}
-            description="Pick an animation for each state. Click a preview to replay it."
-            control={<MascotAnimationPicker />}
-          />
+          <>
+            <SettingsRow
+              {...searchableSetting("mascot-animations")}
+              description="Claude's animation for each state. Click a preview to replay it."
+              control={<MascotAnimationPicker character="claude" />}
+            />
+            <SettingsRow
+              {...searchableSetting("codex-mascot-animations")}
+              description="Codex's animation for each state. Click a preview to replay it."
+              control={<MascotAnimationPicker character="codex" />}
+            />
+          </>
         ) : null}
 
         <SettingsRow

@@ -130,7 +130,7 @@ function SubagentChip(props: {
   const detail = chip.progress ?? SUBAGENT_STATE_LABEL[chip.state];
   const content = (
     <>
-      {props.mascots ? <SubagentMascot state={chip.state} /> : null}
+      {props.mascots ? <SubagentMascot state={chip.state} character={chip.character} /> : null}
       {props.mascots && chip.state === "working" ? null : <SubagentStateIcon state={chip.state} />}
       <span className="max-w-[60%] shrink-0 truncate font-medium text-foreground">
         {chip.title}
@@ -207,7 +207,10 @@ export function SubagentStateIcon(props: { readonly state: SubagentStripChip["st
 }
 
 /** The chip's mascot: its state's chosen animation, dimmed when the work failed or stopped. */
-export function SubagentMascot(props: { readonly state: SubagentStripChip["state"] }) {
+export function SubagentMascot(props: {
+  readonly state: SubagentStripChip["state"];
+  readonly character: SubagentStripChip["character"];
+}) {
   const muted = props.state === "failed" || props.state === "stopped";
-  return <Mascot state={muted ? "idle" : props.state} muted={muted} />;
+  return <Mascot state={muted ? "idle" : props.state} character={props.character} muted={muted} />;
 }

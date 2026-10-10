@@ -1466,6 +1466,7 @@ type SidebarSubagentChildInput = Pick<
   | "createdAt"
   | "branch"
   | "worktreePath"
+  | "modelSelection"
 > & {
   readonly subagentStatus?: OrchestrationV2Subagent["status"] | null | undefined;
 };
@@ -1477,6 +1478,8 @@ export interface SidebarSubagentRow {
   readonly state: SubagentStripChipState;
   /** The child's branch when it works in a different worktree than its parent. */
   readonly worktreeBranch: string | null;
+  /** Picks the child's mascot. */
+  readonly providerInstanceId: string;
 }
 
 /** Child threads whose status the sidebar can track, keyed for linger tracking. */
@@ -1537,6 +1540,7 @@ export function deriveSidebarSubagentRows(
         thread.worktreePath !== null && thread.worktreePath !== parentWorktree
           ? subagentWorktreeBranch({ path: thread.worktreePath, branch: thread.branch })
           : null,
+      providerInstanceId: thread.modelSelection.instanceId,
       createdAt: thread.createdAt,
     });
     byParent.set(parentKey, rows);

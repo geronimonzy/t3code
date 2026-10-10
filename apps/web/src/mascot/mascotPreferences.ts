@@ -1,9 +1,14 @@
 import * as Schema from "effect/Schema";
 
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import type { MascotCharacter } from "./mascotAnimations";
 
 const MASCOTS_ENABLED_KEY = "t3code:subagent-strip-mascots";
-const MASCOT_ANIMATIONS_KEY = "t3code:mascot-animations";
+// Claude's choices keep the key they were first saved under.
+const MASCOT_ANIMATIONS_KEYS = {
+  claude: "t3code:mascot-animations",
+  codex: "t3code:mascot-animations-codex",
+} as const satisfies Record<MascotCharacter, string>;
 
 /** Purely cosmetic and per-browser, so mascot settings live in local storage, not synced settings. */
 export function useMascotsPreference() {
@@ -19,9 +24,9 @@ const MascotAnimationChoices = Schema.Struct({
 export type MascotAnimationChoices = typeof MascotAnimationChoices.Type;
 
 /** The animation id picked per state; missing or unknown ids fall back to the defaults. */
-export function useMascotAnimationChoices() {
+export function useMascotAnimationChoices(character: MascotCharacter = "claude") {
   return useLocalStorage<MascotAnimationChoices, MascotAnimationChoices>(
-    MASCOT_ANIMATIONS_KEY,
+    MASCOT_ANIMATIONS_KEYS[character],
     {},
     MascotAnimationChoices,
   );

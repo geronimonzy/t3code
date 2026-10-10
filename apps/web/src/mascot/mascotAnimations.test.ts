@@ -2,6 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_MASCOT_ANIMATION_IDS,
+  mascotAnimationsForState,
+  mascotCharacterForDriver,
+  mascotThemesFor,
   MASCOT_THEMES,
   matchingMascotTheme,
   MASCOT_ANIMATIONS,
@@ -67,12 +70,30 @@ describe("mascot animations", () => {
     "theme %s picks an eligible animation for every state",
     (_id, theme) => {
       for (const state of MASCOT_STATES) {
-        expect(resolveMascotAnimation(state, theme.animations[state]).id).toBe(
+        expect(resolveMascotAnimation(state, theme.animations[state], theme.character).id).toBe(
           theme.animations[state],
         );
       }
     },
   );
+
+  it("gives Codex its own defaults, choices, and themes", () => {
+    expect(mascotCharacterForDriver("codex")).toBe("codex");
+    expect(mascotCharacterForDriver("claudeAgent")).toBe("claude");
+    expect(mascotCharacterForDriver(null)).toBe("claude");
+    expect(resolveMascotAnimation("working", undefined, "codex").id).toBe("codex-bob");
+    // A Claude choice does not leak into Codex, nor the reverse.
+    expect(resolveMascotAnimation("working", "samurai-slash", "codex").id).toBe("codex-bob");
+    expect(resolveMascotAnimation("working", "ninja-throw", "claude").id).toBe(
+      DEFAULT_MASCOT_ANIMATION_IDS.working,
+    );
+    expect(resolveMascotAnimation("working", "ninja-throw", "codex").id).toBe("ninja-throw");
+    expect(mascotAnimationsForState("done", "codex").map((animation) => animation.id)).toContain(
+      "ninja-vanish",
+    );
+    expect(mascotThemesFor("codex").map((theme) => theme.id)).toEqual(["codex-classic", "ninja"]);
+    expect(matchingMascotTheme({}, "codex")?.id).toBe("codex-classic");
+  });
 
   it("recognises a theme from per-state choices, including defaults", () => {
     expect(matchingMascotTheme({})?.id).toBe("classic");

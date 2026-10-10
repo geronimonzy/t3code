@@ -292,9 +292,15 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "mascot-animations",
-    title: "Mascot animations",
+    title: "Claude mascot",
     to: "/settings/appearance",
     searchTerms: ["idle input working done animation pixel claude theme preset samurai"],
+  },
+  {
+    id: "codex-mascot-animations",
+    title: "Codex mascot",
+    to: "/settings/appearance",
+    searchTerms: ["idle input working done animation pixel codex openai theme preset ninja"],
   },
   {
     id: "project-grouping",

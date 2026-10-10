@@ -3,10 +3,11 @@ import { useState } from "react";
 import { MascotSprite } from "../../mascot/Mascot";
 import {
   MASCOT_STATES,
-  MASCOT_THEMES,
   matchingMascotTheme,
   mascotAnimationsForState,
+  mascotThemesFor,
   resolveMascotAnimation,
+  type MascotCharacter,
   type MascotState,
 } from "../../mascot/mascotAnimations";
 import { useMascotAnimationChoices } from "../../mascot/mascotPreferences";
@@ -25,9 +26,11 @@ const CUSTOM_THEME = "custom";
  * A theme preset that sets every state at once, then one animation choice per
  * state, each with a preview that replays on click. Mixing states reads as Custom.
  */
-export function MascotAnimationPicker() {
-  const [choices, setChoices] = useMascotAnimationChoices();
-  const theme = matchingMascotTheme(choices);
+export function MascotAnimationPicker(props: { readonly character: MascotCharacter }) {
+  const { character } = props;
+  const [choices, setChoices] = useMascotAnimationChoices(character);
+  const theme = matchingMascotTheme(choices, character);
+  const themes = mascotThemesFor(character);
   return (
     <div className="grid w-full grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 sm:w-auto">
       <span className="text-muted-foreground text-xs">Theme</span>
@@ -35,15 +38,19 @@ export function MascotAnimationPicker() {
       <Select
         value={theme?.id ?? CUSTOM_THEME}
         onValueChange={(value) => {
-          const picked = MASCOT_THEMES.find((candidate) => candidate.id === value);
+          const picked = themes.find((candidate) => candidate.id === value);
           if (picked) setChoices({ ...picked.animations });
         }}
       >
-        <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Mascot theme">
+        <SelectTrigger
+          size="sm"
+          className="w-full min-w-0"
+          aria-label={`${character} mascot theme`}
+        >
           <SelectValue>{theme?.label ?? "Custom"}</SelectValue>
         </SelectTrigger>
         <SelectPopup align="end" alignItemWithTrigger={false}>
-          {MASCOT_THEMES.map((option) => (
+          {themes.map((option) => (
             <SelectItem key={option.id} value={option.id}>
               {option.label}
             </SelectItem>
@@ -51,10 +58,11 @@ export function MascotAnimationPicker() {
         </SelectPopup>
       </Select>
       {MASCOT_STATES.map((state) => {
-        const animation = resolveMascotAnimation(state, choices[state]);
+        const animation = resolveMascotAnimation(state, choices[state], character);
         return (
           <MascotAnimationChoice
             key={state}
+            character={character}
             state={state}
             animationId={animation.id}
             onChange={(animationId) => setChoices({ ...choices, [state]: animationId })}
@@ -66,12 +74,13 @@ export function MascotAnimationPicker() {
 }
 
 function MascotAnimationChoice(props: {
+  readonly character: MascotCharacter;
   readonly state: MascotState;
   readonly animationId: string;
   readonly onChange: (animationId: string) => void;
 }) {
   const [replay, setReplay] = useState(0);
-  const animation = resolveMascotAnimation(props.state, props.animationId);
+  const animation = resolveMascotAnimation(props.state, props.animationId, props.character);
   const label = STATE_LABEL[props.state];
   return (
     <>
@@ -94,7 +103,7 @@ function MascotAnimationChoice(props: {
           <SelectValue>{animation.label}</SelectValue>
         </SelectTrigger>
         <SelectPopup align="end" alignItemWithTrigger={false}>
-          {mascotAnimationsForState(props.state).map((option) => (
+          {mascotAnimationsForState(props.state, props.character).map((option) => (
             <SelectItem key={option.id} value={option.id}>
               {option.label}
             </SelectItem>

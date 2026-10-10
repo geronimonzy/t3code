@@ -8,6 +8,7 @@ import {
   mascotFrameRuns,
   resolveMascotAnimation,
   type MascotAnimation,
+  type MascotCharacter,
   type MascotRun,
   type MascotState,
 } from "./mascotAnimations";
@@ -30,12 +31,15 @@ function spriteRuns(animation: MascotAnimation): ReadonlyArray<MascotRun> {
  */
 export const Mascot = memo(function Mascot(props: {
   readonly state: MascotState;
+  /** Whose mascot to draw; Claude's when absent. */
+  readonly character?: MascotCharacter | undefined;
   /** Dims the mascot for failed or stopped work. */
   readonly muted?: boolean;
   readonly className?: string;
 }) {
-  const [choices] = useMascotAnimationChoices();
-  const animation = resolveMascotAnimation(props.state, choices[props.state]);
+  const character = props.character ?? "claude";
+  const [choices] = useMascotAnimationChoices(character);
+  const animation = resolveMascotAnimation(props.state, choices[props.state], character);
   return (
     <MascotSprite
       key={`${props.state}:${animation.id}`}

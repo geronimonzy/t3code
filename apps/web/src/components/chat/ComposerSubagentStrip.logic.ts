@@ -8,6 +8,8 @@ import { isActiveSubagentStatus } from "@t3tools/client-runtime/state/subagentRu
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import * as DateTime from "effect/DateTime";
 
+import { mascotCharacterForDriver, type MascotCharacter } from "../../mascot/mascotAnimations";
+
 /** How long a finished chip stays in the strip before it leaves. */
 export const SUBAGENT_STRIP_DONE_LINGER_MS = 5_000;
 export const SUBAGENT_STRIP_MAX_VISIBLE = 3;
@@ -22,6 +24,7 @@ export interface SubagentStripChip {
   readonly state: SubagentStripChipState;
   /** The branch of the worktree the agent works in, when it is not the parent's checkout. */
   readonly worktreeBranch: string | null;
+  readonly character: MascotCharacter;
 }
 
 export interface SubagentStrip {
@@ -202,6 +205,7 @@ export function deriveSubagentStrip(
       progress: state === "working" && progress ? progress : null,
       state,
       worktreeBranch: subagentWorktreeBranch(subagent.worktree),
+      character: mascotCharacterForDriver(subagent.driver),
     });
   }
   if (chips.length === 0) return null;

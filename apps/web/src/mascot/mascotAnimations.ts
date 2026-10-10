@@ -14,6 +14,15 @@
 export const MASCOT_STATES = ["idle", "input", "working", "done"] as const;
 export type MascotState = (typeof MASCOT_STATES)[number];
 
+/** Each provider family has its own mascot, with its own animations and choices. */
+export const MASCOT_CHARACTERS = ["claude", "codex"] as const;
+export type MascotCharacter = (typeof MASCOT_CHARACTERS)[number];
+
+/** Codex threads and agents get the Codex mascot; every other provider keeps Claude's. */
+export function mascotCharacterForDriver(driver: string | null | undefined): MascotCharacter {
+  return driver === "codex" ? "codex" : "claude";
+}
+
 export const MASCOT_FRAME_WIDTH = 17;
 export const MASCOT_FRAME_HEIGHT = 10;
 export const MAX_LOOP_FPS = 4;
@@ -29,6 +38,9 @@ export const MASCOT_PALETTE = {
   s: "fill-[#d4dae3]",
   b: "fill-[#6b4423]",
   g: "fill-[#7fb069]",
+  o: "fill-[#5b8def]",
+  p: "fill-[#3d63b8]",
+  n: "fill-[#1f2a3d]",
 } as const;
 export type MascotPaletteKey = keyof typeof MASCOT_PALETTE;
 
@@ -40,6 +52,8 @@ export interface MascotAnimation {
   readonly fps: number;
   readonly loop: boolean;
   readonly frames: ReadonlyArray<ReadonlyArray<string>>;
+  /** Whose mascot this is; absent means Claude's. */
+  readonly character?: MascotCharacter;
 }
 
 // Rows: 0-2 headroom for hops and props, 3-7 body (arms on 5-6), 8-9 legs.
@@ -278,7 +292,7 @@ function sparkle(frame: ReadonlyArray<string>): ReadonlyArray<string> {
   );
 }
 
-export const MASCOT_ANIMATIONS: ReadonlyArray<MascotAnimation> = [
+const CLAUDE_MASCOT_ANIMATIONS: ReadonlyArray<MascotAnimation> = [
   {
     id: "still",
     label: "Still",
@@ -402,6 +416,175 @@ export const MASCOT_ANIMATIONS: ReadonlyArray<MascotAnimation> = [
   },
 ];
 
+/** Swaps palette colors, so one drawing serves another character. */
+function recolor(
+  frame: ReadonlyArray<string>,
+  colors: Readonly<Partial<Record<MascotPaletteKey, MascotPaletteKey>>>,
+): ReadonlyArray<string> {
+  return frame.map((row) =>
+    [...row].map((pixel) => colors[pixel as MascotPaletteKey] ?? pixel).join(""),
+  );
+}
+
+// Codex: Claude's classic poses in Codex blue.
+const CODEX_CLASSIC_ANIMATIONS: ReadonlyArray<MascotAnimation> = CLAUDE_MASCOT_ANIMATIONS.filter(
+  (animation) => !animation.id.startsWith("samurai-"),
+).map((animation) => ({
+  ...animation,
+  id: `codex-${animation.id}`,
+  character: "codex",
+  frames: animation.frames.map((frame) => recolor(frame, { c: "o", d: "p" })),
+}));
+
+// Codex ninja theme: dark hood (n) with eye slits, red headband tails, steel shuriken.
+const NINJA_LEGS = [".....o.o.o.o.....", ".....o.o.o.o....."];
+const NINJA_STAND = [
+  ".................",
+  ".................",
+  ".................",
+  "....nnnnnnnnnr...",
+  "....nnwnnnwnn.rr.",
+  "..ooooooooooooo..",
+  "..ooooooooooooo..",
+  "....ooooooooo....",
+  ...NINJA_LEGS,
+];
+
+// Closed "^ ^" eyes.
+const NINJA_HAPPY = [
+  ".................",
+  ".................",
+  ".................",
+  "....nnwnnnwnnr...",
+  "....nwnwnwnwn.rr.",
+  "..ooooooooooooo..",
+  "..ooooooooooooo..",
+  "....ooooooooo....",
+  ...NINJA_LEGS,
+];
+
+const NINJA_BOW = [
+  ".................",
+  ".................",
+  ".................",
+  ".................",
+  "....nnnnnnnnnr...",
+  "..oonnnnnnnnnnrr.",
+  "..ooooooooooooo..",
+  "....ooooooooo....",
+  ...NINJA_LEGS,
+];
+
+// A shuriken raised overhead.
+const NINJA_WIND_UP = [
+  ".............s.s.",
+  "..............s..",
+  ".............sos.",
+  "....nnnnnnnnnoo..",
+  "....nnwnnnwnn.rr.",
+  "..ooooooooooo....",
+  "..ooooooooooo....",
+  "....ooooooooo....",
+  ...NINJA_LEGS,
+];
+
+const NINJA_THROW = [
+  ".................",
+  ".................",
+  ".................",
+  "....nnnnnnnnnrs.s",
+  "....nnwnnnwnn.rs.",
+  "..oooooooooooos.s",
+  "..ooooooooooooo..",
+  "....ooooooooo....",
+  ...NINJA_LEGS,
+];
+
+// Vanishing in a puff of smoke (s), then gone.
+const NINJA_SMOKE = [
+  ".................",
+  ".................",
+  ".....s...s.......",
+  "...ssnnnnsnnnss..",
+  "..ssnnwsssnnss...",
+  ".ssoooosssoooss..",
+  "..sooossssooos...",
+  "...ssoooooooss...",
+  ".....s.o.s.o.....",
+  ".....o.o.o.o.....",
+];
+
+const NINJA_PUFF = [
+  ".................",
+  ".................",
+  "......s...s......",
+  "....sssssssss....",
+  "...sssssssssss...",
+  "..sssssssssssss..",
+  "..sssssssssssss..",
+  "...sssssssssss...",
+  ".....sss.sss.....",
+  ".................",
+];
+
+const NINJA_WISPS = [
+  ".................",
+  ".................",
+  ".................",
+  ".....s.....s.....",
+  "...s...s.s...s...",
+  "..s..s.....s..s..",
+  "....s..s.s..s....",
+  "......s...s......",
+  ".................",
+  ".................",
+];
+
+const NINJA_ANIMATIONS: ReadonlyArray<MascotAnimation> = [
+  {
+    id: "ninja-still",
+    label: "Ninja: still",
+    states: ["idle"],
+    fps: 1,
+    loop: false,
+    frames: [NINJA_STAND],
+    character: "codex",
+  },
+  {
+    id: "ninja-bow",
+    label: "Ninja: bow",
+    states: ["input"],
+    fps: 2,
+    loop: true,
+    frames: [NINJA_STAND, NINJA_STAND, NINJA_BOW, NINJA_BOW],
+    character: "codex",
+  },
+  {
+    id: "ninja-throw",
+    label: "Ninja: throw",
+    states: ["working"],
+    fps: 4,
+    loop: true,
+    frames: [NINJA_WIND_UP, NINJA_WIND_UP, NINJA_THROW, NINJA_STAND],
+    character: "codex",
+  },
+  {
+    id: "ninja-vanish",
+    label: "Ninja: vanish",
+    states: ["done"],
+    fps: 8,
+    loop: false,
+    frames: [NINJA_STAND, NINJA_SMOKE, NINJA_PUFF, NINJA_WISPS, sparkle(NINJA_HAPPY), NINJA_HAPPY],
+    character: "codex",
+  },
+];
+
+export const MASCOT_ANIMATIONS: ReadonlyArray<MascotAnimation> = [
+  ...CLAUDE_MASCOT_ANIMATIONS,
+  ...CODEX_CLASSIC_ANIMATIONS,
+  ...NINJA_ANIMATIONS,
+];
+
 export const DEFAULT_MASCOT_ANIMATION_IDS = {
   idle: "still",
   input: "wave",
@@ -409,18 +592,39 @@ export const DEFAULT_MASCOT_ANIMATION_IDS = {
   done: "jump",
 } as const satisfies Record<MascotState, string>;
 
+const DEFAULT_ANIMATION_IDS_BY_CHARACTER = {
+  claude: DEFAULT_MASCOT_ANIMATION_IDS,
+  codex: {
+    idle: "codex-still",
+    input: "codex-wave",
+    working: "codex-bob",
+    done: "codex-jump",
+  },
+} as const satisfies Record<MascotCharacter, Record<MascotState, string>>;
+
+function animationCharacter(animation: MascotAnimation): MascotCharacter {
+  return animation.character ?? "claude";
+}
+
 export interface MascotTheme {
   readonly id: string;
   readonly label: string;
+  readonly character: MascotCharacter;
   readonly animations: Record<MascotState, string>;
 }
 
 /** Presets that pick an animation for every state at once. */
 export const MASCOT_THEMES: ReadonlyArray<MascotTheme> = [
-  { id: "classic", label: "Classic", animations: DEFAULT_MASCOT_ANIMATION_IDS },
+  {
+    id: "classic",
+    label: "Classic",
+    character: "claude",
+    animations: DEFAULT_ANIMATION_IDS_BY_CHARACTER.claude,
+  },
   {
     id: "samurai",
     label: "Samurai",
+    character: "claude",
     animations: {
       idle: "samurai-tea",
       input: "samurai-bow",
@@ -428,16 +632,39 @@ export const MASCOT_THEMES: ReadonlyArray<MascotTheme> = [
       done: "samurai-sheathe",
     },
   },
+  {
+    id: "codex-classic",
+    label: "Classic",
+    character: "codex",
+    animations: DEFAULT_ANIMATION_IDS_BY_CHARACTER.codex,
+  },
+  {
+    id: "ninja",
+    label: "Ninja",
+    character: "codex",
+    animations: {
+      idle: "ninja-still",
+      input: "ninja-bow",
+      working: "ninja-throw",
+      done: "ninja-vanish",
+    },
+  },
 ];
 
+export function mascotThemesFor(character: MascotCharacter): ReadonlyArray<MascotTheme> {
+  return MASCOT_THEMES.filter((theme) => theme.character === character);
+}
+
 /** The theme whose animations match the effective choice for every state, if any. */
-export function matchingMascotTheme(choices: {
-  readonly [State in MascotState]?: string | undefined;
-}): MascotTheme | null {
+export function matchingMascotTheme(
+  choices: { readonly [State in MascotState]?: string | undefined },
+  character: MascotCharacter = "claude",
+): MascotTheme | null {
   return (
-    MASCOT_THEMES.find((theme) =>
+    mascotThemesFor(character).find((theme) =>
       MASCOT_STATES.every(
-        (state) => resolveMascotAnimation(state, choices[state]).id === theme.animations[state],
+        (state) =>
+          resolveMascotAnimation(state, choices[state], character).id === theme.animations[state],
       ),
     ) ?? null
   );
@@ -445,18 +672,26 @@ export function matchingMascotTheme(choices: {
 
 const ANIMATIONS_BY_ID = new Map(MASCOT_ANIMATIONS.map((animation) => [animation.id, animation]));
 
-export function mascotAnimationsForState(state: MascotState): ReadonlyArray<MascotAnimation> {
-  return MASCOT_ANIMATIONS.filter((animation) => animation.states.includes(state));
+export function mascotAnimationsForState(
+  state: MascotState,
+  character: MascotCharacter = "claude",
+): ReadonlyArray<MascotAnimation> {
+  return MASCOT_ANIMATIONS.filter(
+    (animation) => animation.states.includes(state) && animationCharacter(animation) === character,
+  );
 }
 
 /** The chosen animation for a state, falling back to the default for unknown or ineligible ids. */
 export function resolveMascotAnimation(
   state: MascotState,
   chosenId: string | undefined,
+  character: MascotCharacter = "claude",
 ): MascotAnimation {
   const chosen = chosenId === undefined ? undefined : ANIMATIONS_BY_ID.get(chosenId);
-  if (chosen && chosen.states.includes(state)) return chosen;
-  return ANIMATIONS_BY_ID.get(DEFAULT_MASCOT_ANIMATION_IDS[state])!;
+  if (chosen && chosen.states.includes(state) && animationCharacter(chosen) === character) {
+    return chosen;
+  }
+  return ANIMATIONS_BY_ID.get(DEFAULT_ANIMATION_IDS_BY_CHARACTER[character][state])!;
 }
 
 /** Problems that would break the sprite renderer or the motion rules; empty when valid. */

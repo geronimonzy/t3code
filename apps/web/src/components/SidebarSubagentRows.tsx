@@ -3,6 +3,7 @@ import { GitBranchIcon } from "lucide-react";
 import { memo, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import type { MascotCharacter } from "../mascot/mascotAnimations";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SUBAGENT_STATE_LABEL,
@@ -20,6 +21,8 @@ import type { SidebarSubagentRow } from "./Sidebar.logic";
 export const SidebarSubagentRows = memo(function SidebarSubagentRows(props: {
   readonly rows: ReadonlyArray<SidebarSubagentRow>;
   readonly mascots: boolean;
+  /** Which mascot a provider instance gets. */
+  readonly mascotCharacterFor: (providerInstanceId: string) => MascotCharacter;
   readonly onActivate: (threadRef: ScopedThreadRef) => void;
 }) {
   const { rows } = props;
@@ -42,7 +45,12 @@ export const SidebarSubagentRows = memo(function SidebarSubagentRows(props: {
             aria-label={`Open subagent ${row.title}, ${SUBAGENT_STATE_LABEL[row.state]}`}
             onClick={() => props.onActivate(row.threadRef)}
           >
-            {props.mascots ? <SubagentMascot state={row.state} /> : null}
+            {props.mascots ? (
+              <SubagentMascot
+                state={row.state}
+                character={props.mascotCharacterFor(row.providerInstanceId)}
+              />
+            ) : null}
             {props.mascots && row.state === "working" ? null : (
               <SubagentStateIcon state={row.state} />
             )}

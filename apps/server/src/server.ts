@@ -562,7 +562,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       const service = yield* SubagentWorktreeReactor.SubagentWorktreeReactor;
       yield* service.start();
     }),
-  ).pipe(Layer.provide(SubagentWorktreeReactor.layer)),
+  ).pipe(Layer.provide(SubagentWorktreeReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
   // Subscribes to `account.rate-limits.updated` so usage bars track live
   // telemetry instead of waiting for the next status probe.
   ProviderUsageLimitsIngestion.layer,

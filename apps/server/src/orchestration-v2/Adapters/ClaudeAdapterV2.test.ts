@@ -9706,7 +9706,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* Queue.take(harness.terminalReceipts);
         const worktrees = harness.events.flatMap((event) =>
-          event.type === "subagent.updated" && event.subagent.worktree !== undefined
+          event.type === "subagent.updated" && event.subagent.worktree != null
             ? [event.subagent.worktree]
             : [],
         );
@@ -9717,6 +9717,72 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     );
+
+    it("records that a finished subagent's worktree was removed", () =>
+      Effect.gen(function* () {
+        const { repository, worktree } = yield* makeRepositoryWithWorktree;
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("worktree-removed-attempt"),
+            text: "Look, but change nothing.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId: "agent-clean",
+            toolUseId: "toolu_clean_agent",
+            uuid: "00000000-0000-4000-8000-000000000711",
+          }),
+        );
+        const hook = harness.getOpenedOptions()?.hooks?.PreToolUse?.[0]?.hooks[0];
+        assert.isDefined(hook);
+        yield* Effect.promise(() =>
+          hook!(
+            {
+              hook_event_name: "PreToolUse",
+              session_id: WAKE_NATIVE_SESSION,
+              transcript_path: "/tmp/transcript.jsonl",
+              cwd: worktree,
+              agent_id: "agent-clean",
+              tool_name: "Bash",
+              tool_input: { command: "ls" },
+              tool_use_id: "toolu_ls",
+            } as Parameters<NonNullable<typeof hook>>[0],
+            "toolu_ls",
+            { signal: new AbortController().signal },
+          ),
+        );
+        // Claude removes an untouched worktree when the subagent ends.
+        NodeChildProcess.execFileSync("git", ["worktree", "remove", worktree], {
+          cwd: repository,
+          stdio: "ignore",
+        });
+        yield* harness.offerAndWait(
+          makeSubagentNotificationFrame({
+            taskId: "agent-clean",
+            toolUseId: "toolu_clean_agent",
+            summary: "Nothing to change.",
+            uuid: "00000000-0000-4000-8000-000000000712",
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "worktree-removed-result", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const worktrees = harness.events.flatMap((event) =>
+          event.type === "subagent.updated" && event.subagent.worktree !== undefined
+            ? [event.subagent.worktree]
+            : [],
+        );
+        assert.deepEqual(worktrees.at(0), { path: worktree, branch: "feature" });
+        assert.isNull(worktrees.at(-1));
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))));
   });
 
   describe("cost", () => {

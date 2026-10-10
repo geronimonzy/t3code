@@ -3379,6 +3379,26 @@ export function makeClaudeAdapterV2(
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
+        // Claude removes an isolated subagent's worktree when the subagent
+        // changed nothing. A finished subagent whose worktree folder is gone
+        // records that, so its child thread returns to the parent's checkout.
+        const releaseRemovedSubagentWorktrees = Effect.gen(function* () {
+          for (const subagent of (yield* Ref.get(sessionSubagentsByTaskId)).values()) {
+            const worktree = subagent.task.worktree;
+            if (!worktree || subagent.task.status === "running") continue;
+            const exists = yield* fileSystem
+              .exists(worktree.path)
+              .pipe(Effect.orElseSucceed(() => true));
+            if (exists) continue;
+            subagent.task = { ...subagent.task, worktree: null, updatedAt: yield* DateTime.now };
+            yield* emitProviderEvent({
+              type: "subagent.updated",
+              driver: CLAUDE_PROVIDER,
+              subagent: subagent.task,
+            });
+          }
+        });
+
         // A subagent run with worktree isolation works in its own git worktree,
         // which no SDK message names. Its tool calls report the folder they run
         // in, so the first call from a subagent records that worktree on it.
@@ -5115,6 +5135,7 @@ export function makeClaudeAdapterV2(
           for (const toolCall of endingSubagentCalls) {
             subagentToolCalls.delete(toolCall.nativeItemId);
           }
+          yield* releaseRemovedSubagentWorktrees;
 
           if (
             input.context.assistant.emittedNativeItemIds.size === 0 &&

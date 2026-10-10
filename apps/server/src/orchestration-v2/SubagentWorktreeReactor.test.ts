@@ -10,7 +10,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 
-import { subagentWorktreeTarget } from "./SubagentWorktreeReactor.ts";
+import { subagentWorktreeAction } from "./SubagentWorktreeReactor.ts";
 
 const now = DateTime.makeUnsafe("2026-10-10T12:00:00.000Z");
 const childThreadId = ThreadId.make("thread:child");
@@ -47,9 +47,10 @@ const subagentUpdated = (
   },
 });
 
-describe("subagentWorktreeTarget", () => {
+describe("subagentWorktreeAction", () => {
   it("points a native subagent's child thread at its worktree", () => {
-    expect(subagentWorktreeTarget(subagentUpdated({ worktree }), new Map())).toEqual({
+    expect(subagentWorktreeAction(subagentUpdated({ worktree }), new Map())).toEqual({
+      kind: "point",
       childThreadId,
       ...worktree,
     });
@@ -57,16 +58,24 @@ describe("subagentWorktreeTarget", () => {
 
   it("points each child thread once per worktree", () => {
     const pointed = new Map([[childThreadId, worktree.path]]);
-    expect(subagentWorktreeTarget(subagentUpdated({ worktree }), pointed)).toBeNull();
+    expect(subagentWorktreeAction(subagentUpdated({ worktree }), pointed)).toBeNull();
+  });
+
+  it("returns the child to its parent's checkout once the worktree is gone", () => {
+    expect(subagentWorktreeAction(subagentUpdated({ worktree: null }), new Map())).toEqual({
+      kind: "release",
+      childThreadId,
+      parentThreadId: ThreadId.make("thread:parent"),
+    });
   });
 
   it("leaves subagents without a worktree, delegated tasks, and other events alone", () => {
-    expect(subagentWorktreeTarget(subagentUpdated({}), new Map())).toBeNull();
+    expect(subagentWorktreeAction(subagentUpdated({}), new Map())).toBeNull();
     expect(
-      subagentWorktreeTarget(subagentUpdated({ worktree, origin: "app_owned" }), new Map()),
+      subagentWorktreeAction(subagentUpdated({ worktree, origin: "app_owned" }), new Map()),
     ).toBeNull();
     expect(
-      subagentWorktreeTarget(subagentUpdated({ worktree, childThreadId: null }), new Map()),
+      subagentWorktreeAction(subagentUpdated({ worktree, childThreadId: null }), new Map()),
     ).toBeNull();
   });
 });

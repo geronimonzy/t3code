@@ -8,32 +8,46 @@ import * as Stream from "effect/Stream";
 
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
-/** The child thread a subagent update should point at a worktree, if any. */
-export function subagentWorktreeTarget(
+export type SubagentWorktreeAction =
+  | {
+      readonly kind: "point";
+      readonly childThreadId: ThreadId;
+      readonly path: string;
+      readonly branch: string | null;
+    }
+  // The worktree is gone: the child follows its parent's checkout again.
+  | {
+      readonly kind: "release";
+      readonly childThreadId: ThreadId;
+      readonly parentThreadId: ThreadId;
+    };
+
+/** What a subagent update asks of its child thread's workspace, if anything. */
+export function subagentWorktreeAction(
   event: OrchestrationV2DomainEvent,
   pointedChildThreads: ReadonlyMap<ThreadId, string>,
-): {
-  readonly childThreadId: ThreadId;
-  readonly path: string;
-  readonly branch: string | null;
-} | null {
+): SubagentWorktreeAction | null {
   if (event.type !== "subagent.updated") return null;
   const { childThreadId, origin, worktree } = event.payload;
   // A delegated task owns its thread's workspace and provider sessions.
   if (origin !== "provider_native" || childThreadId === null || worktree === undefined) {
     return null;
   }
+  if (worktree === null) {
+    return { kind: "release", childThreadId, parentThreadId: event.payload.threadId };
+  }
   if (pointedChildThreads.get(childThreadId) === worktree.path) return null;
-  return { childThreadId, path: worktree.path, branch: worktree.branch };
+  return { kind: "point", childThreadId, path: worktree.path, branch: worktree.branch };
 }
 
 /**
  * Points a subagent's child thread at the git worktree the subagent works in,
- * once its provider observes one. The child's branch, changes, and editor and
- * pull request actions then follow that worktree instead of the parent's
- * checkout. A provider-native child thread binds no provider session of its
- * own, so moving it detaches nothing.
+ * once its provider observes one, and back at the parent's checkout once that
+ * worktree is removed. The child's branch, changes, and editor and pull
+ * request actions follow the worktree meanwhile. A provider-native child
+ * thread binds no provider session of its own, so moving it detaches nothing.
  */
 export class SubagentWorktreeReactor extends Context.Service<
   SubagentWorktreeReactor,
@@ -43,6 +57,7 @@ export class SubagentWorktreeReactor extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const crypto = yield* Crypto.Crypto;
   // Every later update of the subagent repeats its worktree; point each child once.
   const pointedChildThreads = new Map<ThreadId, string>();
@@ -52,22 +67,34 @@ export const make = Effect.gen(function* () {
   )(function* () {
     yield* forkParked(
       Stream.runForEach(engine.streamDomainEvents, (event) => {
-        const target = subagentWorktreeTarget(event, pointedChildThreads);
-        if (target === null) return Effect.void;
-        pointedChildThreads.set(target.childThreadId, target.path);
+        const action = subagentWorktreeAction(event, pointedChildThreads);
+        if (action === null) return Effect.void;
         return Effect.gen(function* () {
+          let workspace: { readonly branch: string | null; readonly worktreePath: string | null };
+          if (action.kind === "point") {
+            pointedChildThreads.set(action.childThreadId, action.path);
+            workspace = { branch: action.branch, worktreePath: action.path };
+          } else {
+            pointedChildThreads.delete(action.childThreadId);
+            // Read both threads, so a release after a restart still finds a moved child.
+            const parent = yield* projections.getThreadShell(action.parentThreadId);
+            const child = yield* projections.getThreadShell(action.childThreadId);
+            if (parent === null || child === null || child.worktreePath === parent.worktreePath) {
+              return;
+            }
+            workspace = { branch: parent.branch, worktreePath: parent.worktreePath };
+          }
           const uuid = yield* crypto.randomUUIDv4;
           yield* engine.dispatch({
             type: "thread.metadata.update",
-            commandId: CommandId.make(`server:subagent-worktree:${target.childThreadId}:${uuid}`),
-            threadId: target.childThreadId,
-            branch: target.branch,
-            worktreePath: target.path,
+            commandId: CommandId.make(`server:subagent-worktree:${action.childThreadId}:${uuid}`),
+            threadId: action.childThreadId,
+            ...workspace,
           });
         }).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("subagent worktree update skipped", {
-              threadId: target.childThreadId,
+              threadId: action.childThreadId,
               cause,
             }),
           ),

@@ -3630,6 +3630,10 @@ export default function ChatView(props: ChatViewProps) {
     isConnecting ||
     isCompacting ||
     runlessWorkStartedAt !== null;
+  const activeProviderThreadCostUsd =
+    serverProjection?.providerThreads.find(
+      (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
+    )?.costUsd ?? null;
   const activeContextWindow = useMemo(
     () =>
       deriveLatestContextWindowSnapshot(
@@ -11199,6 +11203,7 @@ export default function ChatView(props: ChatViewProps) {
     onAddProjectScript: saveProjectScript,
     onUpdateProjectScript: updateProjectScript,
     onDeleteProjectScript: deleteProjectScript,
+    usage: { context: activeContextWindow, costUsd: activeProviderThreadCostUsd },
   };
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,

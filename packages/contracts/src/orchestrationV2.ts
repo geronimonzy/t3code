@@ -910,6 +910,12 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   goal: Schema.optional(Schema.NullOr(OrchestrationV2ProviderGoal)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Running estimated cost of this provider thread in USD, as the provider
+   * reports it. API-equivalent pricing, not a billing statement; absent when
+   * the provider reports no cost.
+   */
+  costUsd: Schema.optional(Schema.Number.check(Schema.isFinite())),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
 });

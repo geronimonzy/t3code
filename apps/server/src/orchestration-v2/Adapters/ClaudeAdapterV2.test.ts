@@ -2001,6 +2001,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly apiErrorStatus?: number;
     // null omits the field, as the CLI does on a zero-turn result.
     readonly terminalReason?: SDKResultMessage["terminal_reason"] | null;
+    readonly totalCostUsd?: number;
   }) =>
     claudeSdkFrame({
       type: "result",
@@ -2011,7 +2012,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       num_turns: input.numTurns ?? 1,
       result: input.result,
       stop_reason: "end_turn",
-      total_cost_usd: 0,
+      total_cost_usd: input.totalCostUsd ?? 0,
       usage: {
         input_tokens: 1,
         output_tokens: 1,
@@ -9605,6 +9606,70 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           status: "active",
           checks: 2,
         });
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+  });
+
+  describe("cost", () => {
+    const providerThreadCosts = (events: ReadonlyArray<ProviderAdapterV2Event>) =>
+      events.flatMap((event) =>
+        event.type === "provider_thread.updated" && event.providerThread.costUsd !== undefined
+          ? [event.providerThread.costUsd]
+          : [],
+      );
+
+    it.effect("adds each turn's share of Claude's running session cost to the thread", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const runTurn = (attempt: string, totalCostUsd: number) =>
+          Effect.gen(function* () {
+            yield* harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                // A stale snapshot without a cost must not reset the running total.
+                providerThread: harness.providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make(attempt),
+                text: "Work.",
+                attachments: [],
+              }),
+            );
+            yield* Queue.offer(
+              harness.sdkMessages,
+              makeResultFrame({ uuid: `${attempt}-result`, result: "Done.", totalCostUsd }),
+            );
+            yield* Queue.take(harness.terminalReceipts);
+          });
+        yield* runTurn("cost-attempt-1", 0.5);
+        assert.equal(providerThreadCosts(harness.events).at(-1), 0.5);
+        // Claude reports 1.25 so far this session, so the second turn cost 0.75.
+        yield* runTurn("cost-attempt-2", 1.25);
+        assert.equal(providerThreadCosts(harness.events).at(-1), 1.25);
+        // A zeroed crash result adds nothing.
+        yield* runTurn("cost-attempt-3", 0);
+        assert.equal(providerThreadCosts(harness.events).at(-1), 1.25);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+
+    it.effect("continues a cost already stored on the provider thread", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: { ...harness.providerThread, costUsd: 2 },
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("cost-resume-attempt"),
+            text: "Work.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "cost-resume-result", result: "Done.", totalCostUsd: 0.25 }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        assert.equal(providerThreadCosts(harness.events).at(-1), 2.25);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     );
   });

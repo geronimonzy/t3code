@@ -3119,6 +3119,11 @@ export function makeClaudeAdapterV2(
         );
         // Native `/goal` per session, seeded from the persisted provider thread.
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
+        // Running cost per native thread. Claude's total_cost_usd counts from
+        // the start of the current query(), so each result adds only what it
+        // grew by since the last result from the same query.
+        const costUsdByNativeThread = new Map<string, number>();
+        let costBaseline: { readonly query: unknown; readonly totalCostUsd: number } | null = null;
         // Turns whose model output met an active goal's Stop hook check at its end.
         const goalCheckedTurns = new Set<string>();
         // Subagent registry that survives turn settle: a background subagent
@@ -3550,6 +3555,9 @@ export function makeClaudeAdapterV2(
             pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster),
             ...(goalsByNativeThread.has(input.nativeThreadId)
               ? { goal: goalsByNativeThread.get(input.nativeThreadId) ?? null }
+              : {}),
+            ...(costUsdByNativeThread.has(input.nativeThreadId)
+              ? { costUsd: costUsdByNativeThread.get(input.nativeThreadId) }
               : {}),
             updatedAt: now,
           };
@@ -5207,12 +5215,31 @@ export function makeClaudeAdapterV2(
                     ...(goal.checks === undefined ? {} : { checks: goal.checks }),
                   });
                 }
+                const totalCostUsd = input.result?.total_cost_usd;
+                // Crash and startup results can report zero; they add nothing.
+                if (nativeThreadId !== null && totalCostUsd !== undefined && totalCostUsd > 0) {
+                  const previous =
+                    costBaseline !== null && costBaseline.query === liveQuery
+                      ? costBaseline.totalCostUsd
+                      : 0;
+                  // A smaller total means the running count restarted.
+                  const turnCostUsd =
+                    totalCostUsd >= previous ? totalCostUsd - previous : totalCostUsd;
+                  costBaseline = { query: liveQuery, totalCostUsd };
+                  costUsdByNativeThread.set(
+                    nativeThreadId,
+                    (costUsdByNativeThread.get(nativeThreadId) ?? 0) + turnCostUsd,
+                  );
+                }
                 const providerThread: OrchestrationV2ProviderThread = {
                   ...input.context.input.providerThread,
                   providerSessionId: session.id,
                   ...(clearConversationHead ? { nativeConversationHeadRef: null } : {}),
                   ...(nativeThreadId !== null && goalsByNativeThread.has(nativeThreadId)
                     ? { goal: goalsByNativeThread.get(nativeThreadId) ?? null }
+                    : {}),
+                  ...(nativeThreadId !== null && costUsdByNativeThread.has(nativeThreadId)
+                    ? { costUsd: costUsdByNativeThread.get(nativeThreadId) }
                     : {}),
                   firstRunOrdinal:
                     input.context.input.providerThread.firstRunOrdinal ??
@@ -7519,6 +7546,12 @@ export function makeClaudeAdapterV2(
             yield* rememberProviderThread(turnInput.providerThread);
             if (!goalsByNativeThread.has(nativeThreadId)) {
               goalsByNativeThread.set(nativeThreadId, turnInput.providerThread.goal ?? null);
+            }
+            if (
+              !costUsdByNativeThread.has(nativeThreadId) &&
+              turnInput.providerThread.costUsd !== undefined
+            ) {
+              costUsdByNativeThread.set(nativeThreadId, turnInput.providerThread.costUsd);
             }
             const context: ActiveClaudeTurnContext = {
               input: turnInput,

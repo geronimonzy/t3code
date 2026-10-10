@@ -2608,16 +2608,14 @@ function useChatMarkdownState({
           fileLinkMeta.basename.slice(fileLinkMeta.basename.lastIndexOf(".")),
         ) !== null;
       // Media outside the workspace keeps the expanded preview; other host
-      // files (a report in a temp dir) open read-only in the files panel. A
-      // host folder has nothing to preview and no workspace tree to reveal it
-      // in, so it copies its path instead.
+      // files (a report in a temp dir) open read-only in the files panel, and a
+      // host folder opens there as a tree rooted at it. Without a project there
+      // is no files panel, so a host folder copies its path instead.
       const isHostFolder =
         fileLinkMeta.workspaceRelativePath === null && mediaSource?.endsWith("/") === true;
       const panelPath =
         fileLinkMeta.workspaceRelativePath ??
-        (!canPreviewMedia && !isHostFolder && isAbsolutePath(fileLinkMeta.filePath)
-          ? fileLinkMeta.filePath
-          : null);
+        (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
 
       return (
         <MarkdownFileLink
@@ -2626,7 +2624,7 @@ function useChatMarkdownState({
           iconPath={fileLinkMeta.filePath}
           displayPath={fileLinkMeta.displayPath}
           panelPath={panelPath}
-          copyOnClick={isHostFolder}
+          copyOnClick={isHostFolder && !cwd}
           line={fileLinkMeta.line}
           label={fileLinkLabel(
             {
@@ -2667,6 +2665,7 @@ function useChatMarkdownState({
     [
       canUseShellActions,
       canOperatePreview,
+      cwd,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openInPreferredEditor,

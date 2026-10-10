@@ -1978,8 +1978,8 @@ code {
   font-size: 0.75rem;
 }
 
-/* Click-to-copy inline code: a copy cursor on hover, and a "Copied" label
-   above the span that takes no layout space. */
+/* Click-to-copy inline code: a copy cursor on hover, and a "Copied" label laid
+   over the span itself, so a message row that clips overflow cannot hide it. */
 .chat-markdown code[data-copyable-inline-code] {
   position: relative;
   cursor: copy;
@@ -1992,16 +1992,19 @@ code {
 .chat-markdown code[data-copied="true"]::after {
   content: "Copied";
   position: absolute;
-  bottom: calc(100% + 0.25rem);
-  left: 50%;
-  translate: -50% 0;
-  border-radius: 0.25rem;
-  background: var(--popover);
-  box-shadow: 0 0 0 1px var(--border);
-  padding: 0.1rem 0.4rem;
-  color: var(--popover-foreground);
+  inset: -1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: max-content;
+  border: 1px solid var(--success);
+  border-radius: inherit;
+  background: var(--muted);
+  padding-inline: 0.35rem;
+  color: var(--success);
   font-family: var(--font-sans);
   font-size: 0.6875rem;
+  font-weight: 600;
   white-space: nowrap;
   pointer-events: none;
 }

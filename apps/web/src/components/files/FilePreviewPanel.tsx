@@ -1003,6 +1003,22 @@ function initialExplorerOpen(): boolean {
   }
 }
 
+function hostFolderName(folder: string): string {
+  return (
+    folder
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .at(-1) || folder
+  );
+}
+
+/** Tree entries are root-relative with '/'; host paths keep their own separator. */
+function joinHostFolderPath(folder: string, relativePath: string): string {
+  const separator = folder.includes("\\") && !folder.includes("/") ? "\\" : "/";
+  const entry = separator === "/" ? relativePath : relativePath.replaceAll("/", separator);
+  return `${folder.replace(/[\\/]+$/, "")}${separator}${entry}`;
+}
+
 export default function FilePreviewPanel({
   environmentId,
   cwd,
@@ -1063,10 +1079,12 @@ export default function FilePreviewPanel({
   // a file surface and the read fails. Keep the breadcrumbs, drop the preview
   // pane, and let the tree fill the surface with the folder revealed. Mutation
   // refresh stays on so the surface notices if the path becomes a file. A host
-  // path cannot be revealed in the workspace tree, so it keeps the read error.
+  // folder is outside the workspace tree, so the tree is rooted at it instead,
+  // and its files open as read-only host files.
   const isDirectory = file.isNotFile && !isHostFile;
+  const hostFolder = file.isNotFile && isHostFile && attachment === undefined ? relativePath : null;
   // Everything preview-related keys off previewPath; a folder has no preview.
-  const previewPath = isDirectory ? null : relativePath;
+  const previewPath = isDirectory || hostFolder !== null ? null : relativePath;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const showExplorer = shouldShowFileExplorer({
     relativePath: previewPath,
@@ -1458,13 +1476,15 @@ export default function FilePreviewPanel({
             )}
           >
             <FileBrowserPanel
-              key={`${environmentId}:${cwd}`}
+              key={`${environmentId}:${hostFolder ?? cwd}`}
               environmentId={environmentId}
-              cwd={cwd}
-              projectName={projectName}
-              selectedPath={relativePath}
+              cwd={hostFolder ?? cwd}
+              projectName={hostFolder ? hostFolderName(hostFolder) : projectName}
+              selectedPath={hostFolder ? null : relativePath}
               selectedPathRevealId={revealRequestId}
-              onOpenFile={onOpenFile}
+              onOpenFile={
+                hostFolder ? (path) => onOpenFile(joinHostFolderPath(hostFolder, path)) : onOpenFile
+              }
               workspaceMutationId={workspaceMutationId}
               {...(previewPath && !isMedia && !isPdf
                 ? { onRefreshSelectedFile: file.refresh }

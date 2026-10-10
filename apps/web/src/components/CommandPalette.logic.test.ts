@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import type { Project, Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
+  commandPaletteWorktreeTargets,
   buildBrowseGroups,
   buildCommandPaletteProjectMetadata,
   buildCommandPaletteRows,
@@ -892,5 +893,25 @@ describe("virtualized command palette rows", () => {
     expect(findHighlightedCommandPaletteItem(groups, "thread-b")?.value).toBe("thread-b");
     expect(findHighlightedCommandPaletteItem(groups, "offline")).toBeNull();
     expect(findHighlightedCommandPaletteItem(groups, null)).toBeNull();
+  });
+});
+
+describe("commandPaletteWorktreeTargets", () => {
+  it("lists the project's other worktrees, those without a thread first", () => {
+    const targets = commandPaletteWorktreeTargets(
+      [
+        { name: "main", worktreePath: "/repo" },
+        { name: "feature", worktreePath: "/repo-feature" },
+        { name: "probe", worktreePath: "/repo/.claude/worktrees/probe" },
+        { name: "origin/feature", isRemote: true, worktreePath: null },
+        { name: "stale", worktreePath: null },
+      ],
+      "/repo",
+      new Set(["/repo-feature"]),
+    );
+    expect(targets).toEqual([
+      { branch: "probe", worktreePath: "/repo/.claude/worktrees/probe", hasThread: false },
+      { branch: "feature", worktreePath: "/repo-feature", hasThread: true },
+    ]);
   });
 });

@@ -621,3 +621,37 @@ export function getCommandPaletteInputPlaceholder(mode: CommandPaletteMode): str
       return "Enter path (e.g. ~/projects/my-app)";
   }
 }
+
+export interface CommandPaletteWorktreeTarget {
+  readonly branch: string;
+  readonly worktreePath: string;
+  readonly hasThread: boolean;
+}
+
+/**
+ * The project's other worktrees a new thread could start in, those no thread
+ * works in first: they are the ones easy to lose track of.
+ */
+export function commandPaletteWorktreeTargets(
+  refs: ReadonlyArray<{
+    readonly name: string;
+    readonly isRemote?: boolean | undefined;
+    readonly worktreePath: string | null;
+  }>,
+  projectCwd: string,
+  ownedWorktreePaths: ReadonlySet<string>,
+): ReadonlyArray<CommandPaletteWorktreeTarget> {
+  return refs
+    .flatMap((ref) =>
+      ref.isRemote === true || ref.worktreePath === null || ref.worktreePath === projectCwd
+        ? []
+        : [
+            {
+              branch: ref.name,
+              worktreePath: ref.worktreePath,
+              hasThread: ownedWorktreePaths.has(ref.worktreePath),
+            },
+          ],
+    )
+    .toSorted((left, right) => Number(left.hasThread) - Number(right.hasThread));
+}

@@ -102,7 +102,9 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey } from "./fileContentRevision";
 import {
   filePreviewReadErrorMessage,
+  hostFolderName,
   isMarkdownPreviewFile,
+  joinHostFolderPath,
   resolveFilePreviewPath,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
@@ -1001,22 +1003,6 @@ function initialExplorerOpen(): boolean {
     console.error(error);
     return true;
   }
-}
-
-function hostFolderName(folder: string): string {
-  return (
-    folder
-      .replace(/[\\/]+$/, "")
-      .split(/[\\/]/)
-      .at(-1) || folder
-  );
-}
-
-/** Tree entries are root-relative with '/'; host paths keep their own separator. */
-function joinHostFolderPath(folder: string, relativePath: string): string {
-  const separator = folder.includes("\\") && !folder.includes("/") ? "\\" : "/";
-  const entry = separator === "/" ? relativePath : relativePath.replaceAll("/", separator);
-  return `${folder.replace(/[\\/]+$/, "")}${separator}${entry}`;
 }
 
 export default function FilePreviewPanel({

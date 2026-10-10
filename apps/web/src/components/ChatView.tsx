@@ -257,6 +257,8 @@ import {
   type RightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
+import { isAbsolutePath } from "@t3tools/shared/path";
+import { hostPathParent } from "./files/filePreviewMode";
 import {
   isPreviewSupportedInRuntime,
   setActivePreviewTab,
@@ -4225,6 +4227,15 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  // A thread without a project can still open a host file or folder from chat;
+  // its parent folder stands in for the workspace root the files panel reads from.
+  const hostFileSurfaceRoot =
+    !activeWorkspaceRoot &&
+    renderedRightPanelSurface?.kind === "file" &&
+    !renderedRightPanelSurface.attachment &&
+    isAbsolutePath(renderedRightPanelSurface.relativePath)
+      ? hostPathParent(renderedRightPanelSurface.relativePath)
+      : null;
   useLayoutEffect(() => {
     if (
       threadDetailLoading ||
@@ -5586,7 +5597,8 @@ export default function ChatView(props: ChatViewProps) {
   }, [activePreviewMiniPlayer, activeThreadRef, deviceState.sessions, deviceStateLoaded]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
-      if (!activeThreadRef || !activeProject) return;
+      // Host paths open without a project; workspace paths need one.
+      if (!activeThreadRef || (!activeProject && !isAbsolutePath(relativePath))) return;
       useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
     },
     [activeProject, activeThreadRef],
@@ -11094,16 +11106,17 @@ export default function ChatView(props: ChatViewProps) {
     ) : (renderedRightPanelSurface?.kind === "files" ||
         renderedRightPanelSurface?.kind === "file") &&
       ((activeProject && activeWorkspaceRoot) ||
-        (renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment)) ? (
+        (renderedRightPanelSurface.kind === "file" &&
+          (renderedRightPanelSurface.attachment || hostFileSurfaceRoot))) ? (
       <Suspense fallback={null}>
         <FilePreviewPanel
           key={`${activeThread.environmentId}:${
             renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
               ? `attachment:${renderedRightPanelSurface.attachment.id}`
-              : activeWorkspaceRoot
+              : (activeWorkspaceRoot ?? hostFileSurfaceRoot)
           }`}
           environmentId={activeThread.environmentId}
-          cwd={activeWorkspaceRoot ?? ""}
+          cwd={activeWorkspaceRoot ?? hostFileSurfaceRoot ?? ""}
           projectName={activeProject?.title ?? ""}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}

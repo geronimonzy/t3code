@@ -9,7 +9,10 @@ import {
 } from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
+  hostFolderName,
+  hostPathParent,
   isMarkdownPreviewFile,
+  joinHostFolderPath,
   resolveFilePreviewPath,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
@@ -187,5 +190,28 @@ describe("resolveFilePreviewPath", () => {
         shouldShowFileExplorer({ relativePath, explorerOpen: false, attachmentOpen: false }),
       ).toBe(true);
     }
+  });
+});
+
+describe("host folder paths", () => {
+  it("names a folder by its last segment", () => {
+    expect(hostFolderName("/home/kiril/claudeStuff/")).toBe("claudeStuff");
+    expect(hostFolderName("C:\\Users\\kiril")).toBe("kiril");
+    expect(hostFolderName("/")).toBe("/");
+  });
+
+  it("joins tree entries onto the host folder with its separator", () => {
+    expect(joinHostFolderPath("/home/kiril/", "notes/a.md")).toBe("/home/kiril/notes/a.md");
+    expect(joinHostFolderPath("/", "etc/hosts")).toBe("/etc/hosts");
+    expect(joinHostFolderPath("C:\\Users\\kiril", "notes/a.md")).toBe(
+      "C:\\Users\\kiril\\notes\\a.md",
+    );
+  });
+
+  it("finds the folder holding a host path", () => {
+    expect(hostPathParent("/home/kiril/claudeStuff")).toBe("/home/kiril");
+    expect(hostPathParent("/home/kiril/claudeStuff/")).toBe("/home/kiril");
+    expect(hostPathParent("/home")).toBe("/");
+    expect(hostPathParent("C:\\Users")).toBe("C:\\");
   });
 });

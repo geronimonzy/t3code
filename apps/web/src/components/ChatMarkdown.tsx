@@ -1213,9 +1213,6 @@ interface MarkdownFileLinkProps {
   /** Platform-specific menu label ("Reveal in Finder", ...); required for the
       reveal item to show. */
   revealLabel?: string | undefined;
-  /** A folder outside the workspace: the files panel cannot show it, so a
-      click copies its full path instead. */
-  copyOnClick?: boolean | undefined;
 }
 
 const MARKDOWN_FILE_LINK_CLASS_NAME = "chat-markdown-file-link";
@@ -1913,7 +1910,6 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpenMedia,
   onReveal,
   revealLabel,
-  copyOnClick,
 }: MarkdownFileLinkProps) {
   const handleOpenInEditor = useCallback(() => {
     if (!onOpen) {
@@ -2182,7 +2178,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     <Tooltip>
       <TooltipTrigger
         render={
-          hasPrimaryAction || copyOnClick ? (
+          hasPrimaryAction ? (
             <ContextChip
               kind="mention"
               render={<a href={href} />}
@@ -2191,10 +2187,6 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                if (copyOnClick) {
-                  handleCopy(targetPath, "Folder path");
-                  return;
-                }
                 if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
                   handleOpenInEditor();
                   return;
@@ -2257,8 +2249,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.onOpenMedia === next.onOpenMedia &&
     previous.onReveal === next.onReveal &&
-    previous.revealLabel === next.revealLabel &&
-    previous.copyOnClick === next.copyOnClick
+    previous.revealLabel === next.revealLabel
   );
 }
 
@@ -2609,10 +2600,7 @@ function useChatMarkdownState({
         ) !== null;
       // Media outside the workspace keeps the expanded preview; other host
       // files (a report in a temp dir) open read-only in the files panel, and a
-      // host folder opens there as a tree rooted at it. Without a project there
-      // is no files panel, so a host folder copies its path instead.
-      const isHostFolder =
-        fileLinkMeta.workspaceRelativePath === null && mediaSource?.endsWith("/") === true;
+      // host folder opens there as a tree rooted at it.
       const panelPath =
         fileLinkMeta.workspaceRelativePath ??
         (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
@@ -2624,7 +2612,6 @@ function useChatMarkdownState({
           iconPath={fileLinkMeta.filePath}
           displayPath={fileLinkMeta.displayPath}
           panelPath={panelPath}
-          copyOnClick={isHostFolder && !cwd}
           line={fileLinkMeta.line}
           label={fileLinkLabel(
             {
@@ -2665,7 +2652,6 @@ function useChatMarkdownState({
     [
       canUseShellActions,
       canOperatePreview,
-      cwd,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openInPreferredEditor,

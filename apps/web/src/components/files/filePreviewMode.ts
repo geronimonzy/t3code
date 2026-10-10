@@ -57,3 +57,30 @@ export function setMarkdownTaskChecked(
 
   return `${markdown.slice(0, markerOffset + 1)}${checked ? "x" : " "}${markdown.slice(markerOffset + 2)}`;
 }
+
+export function hostFolderName(folder: string): string {
+  return (
+    folder
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .at(-1) || folder
+  );
+}
+
+/** Tree entries are root-relative with '/'; host paths keep their own separator. */
+export function joinHostFolderPath(folder: string, relativePath: string): string {
+  const separator = folder.includes("\\") && !folder.includes("/") ? "\\" : "/";
+  const entry = separator === "/" ? relativePath : relativePath.replaceAll("/", separator);
+  return `${folder.replace(/[\\/]+$/, "")}${separator}${entry}`;
+}
+
+/** The folder holding a host path, or the path itself when it is a root. */
+export function hostPathParent(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (index < 0) return path;
+  if (index === 0) return trimmed.slice(0, 1);
+  const parent = trimmed.slice(0, index);
+  // "C:" alone is the drive's current folder, not its root.
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
+}

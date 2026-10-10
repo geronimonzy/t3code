@@ -259,11 +259,12 @@ function serializeNode(node: Node): string {
 }
 
 /**
- * Tracks whether a fragment carries exactly one code block and nothing else a
- * reader would see.
+ * Tracks whether a fragment carries exactly one code block, or exactly one
+ * inline code span, and nothing else a reader would see.
  */
 interface SoleCodeBlockScan {
   pre: Element | null;
+  code: Element | null;
   other: boolean;
 }
 
@@ -290,8 +291,13 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
     }
     if (isSkippedElement(element)) continue;
     if (element.tagName === "PRE") {
-      if (scan.pre) scan.other = true;
+      if (scan.pre || scan.code) scan.other = true;
       else scan.pre = element;
+      continue;
+    }
+    if (element.tagName === "CODE") {
+      if (scan.pre || scan.code) scan.other = true;
+      else scan.code = element;
       continue;
     }
     if (element.tagName === "IMG" || element.tagName === "HR") {
@@ -317,12 +323,13 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
  * range, so the fragment holds the whole block even though the user only
  * highlighted code. Re-fencing that pastes stray backticks, so a fragment whose
  * only visible content is one code block copies as plain code, matching a
- * selection that never left the `pre`.
+ * selection that never left the `pre`. A lone inline code span copies plain
+ * the same way, so a highlighted command pastes into a terminal as-is.
  */
-function soleCodeBlock(container: Node): Element | null {
-  const scan: SoleCodeBlockScan = { pre: null, other: false };
+function soleCode(container: Node): Element | null {
+  const scan: SoleCodeBlockScan = { pre: null, code: null, other: false };
   scanForSoleCodeBlock(container, scan);
-  return scan.other ? null : scan.pre;
+  return scan.other ? null : (scan.pre ?? scan.code);
 }
 
 /** Collapses serializer spacing artifacts without touching fenced code content. */
@@ -337,8 +344,8 @@ function tidyMarkdown(markdown: string): string {
 }
 
 export function serializeRenderedMarkdownFragment(container: Node): string {
-  const codeBlock = soleCodeBlock(container);
-  if (codeBlock) return (codeBlock.textContent ?? "").replace(/\n$/, "");
+  const code = soleCode(container);
+  if (code) return (code.textContent ?? "").replace(/\n$/, "");
   return tidyMarkdown(serializeChildren(container));
 }
 

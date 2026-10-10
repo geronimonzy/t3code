@@ -157,6 +157,37 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("run `git status` first");
   });
 
+  it("copies a lone inline code span without backticks", () => {
+    const paragraph = new FakeElement("P").append(
+      new FakeText(" "),
+      new FakeElement("CODE").append(new FakeText("cat ~/notes.md")),
+      new FakeText(" "),
+    );
+    const container = new FakeElement("DIV").append(paragraph);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("cat ~/notes.md");
+  });
+
+  it("keeps backticks when two inline code spans are copied together", () => {
+    const paragraph = new FakeElement("P").append(
+      new FakeElement("CODE").append(new FakeText("vp i")),
+      new FakeText(" "),
+      new FakeElement("CODE").append(new FakeText("vp run dev")),
+    );
+    const container = new FakeElement("DIV").append(paragraph);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("`vp i` `vp run dev`");
+  });
+
+  it("keeps the list marker when a list item holds only inline code", () => {
+    const list = new FakeElement("UL").append(
+      new FakeElement("LI").append(new FakeElement("CODE").append(new FakeText("vp i"))),
+    );
+    const container = new FakeElement("DIV").append(list);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("- `vp i`");
+  });
+
   describe.each([
     { parentLayout: "tight", childLayout: "tight" },
     { parentLayout: "tight", childLayout: "loose" },

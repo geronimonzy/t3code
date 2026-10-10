@@ -197,7 +197,9 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
         .split(/[\\/]/)
         .at(-1) ?? "";
     if (VERSION_SUFFIX_PATTERN.test(basename)) return null;
-    if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basename)) return null;
+    // A trailing slash marks a folder, which has no extension to look for.
+    const isFolder = withoutPosition.endsWith("/");
+    if (!hasPosition && !isFolder && !FILE_EXTENSION_PATTERN.test(basename)) return null;
   }
   return candidate;
 }

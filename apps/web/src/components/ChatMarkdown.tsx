@@ -199,7 +199,7 @@ import {
   useOpenChangeRequestLink,
 } from "~/lib/openPullRequestLink";
 import { useOpenLink } from "../browser/useOpenLink";
-import { useCopyToClipboard, writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import {
   isBrowserPreviewFile,
@@ -1324,19 +1324,20 @@ const MarkdownLinkContext = React.createContext(false);
  * text is left alone, so highlighting part of a span still works.
  */
 function CopyableInlineCode({ children, ...props }: React.ComponentProps<"code">) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({
-    timeout: 1200,
-    target: "inline code",
-  });
   return (
     <code
       {...props}
       data-copyable-inline-code=""
-      data-copied={isCopied ? "true" : undefined}
       onClick={(event) => {
         const selection = window.getSelection();
         if (selection && !selection.isCollapsed) return;
-        copyToClipboard(event.currentTarget.textContent ?? "");
+        const value = event.currentTarget.textContent ?? "";
+        void writeTextToClipboard(value, "inline code").then(
+          (didCopy) => {
+            if (didCopy) toastManager.add({ type: "success", title: "Copied", description: value });
+          },
+          (error) => reportMarkdownActionFailure({ operation: "copy-inline-code" }, error),
+        );
       }}
     >
       {children}

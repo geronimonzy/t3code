@@ -3,6 +3,7 @@ import { GitBranchIcon } from "lucide-react";
 import { memo, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SUBAGENT_STATE_LABEL,
   SUBAGENT_STATE_TONE,
@@ -47,10 +48,19 @@ export const SidebarSubagentRows = memo(function SidebarSubagentRows(props: {
             )}
             <span className="min-w-0 flex-1 truncate text-sidebar-foreground">{row.title}</span>
             {row.worktreeBranch !== null ? (
-              <span className="flex min-w-0 max-w-[40%] shrink items-center gap-0.5 text-sidebar-muted-foreground">
-                <GitBranchIcon className="size-3 flex-none" aria-hidden="true" />
-                <span className="truncate">{row.worktreeBranch}</span>
-              </span>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      className="flex flex-none text-sidebar-muted-foreground"
+                      aria-label={`Worktree ${row.worktreeBranch}`}
+                    />
+                  }
+                >
+                  <GitBranchIcon className="size-3" aria-hidden="true" />
+                </TooltipTrigger>
+                <TooltipPopup side="right">Worktree: {row.worktreeBranch}</TooltipPopup>
+              </Tooltip>
             ) : null}
             <span className={cn("shrink-0", SUBAGENT_STATE_TONE[row.state])}>
               {SUBAGENT_STATE_LABEL[row.state]}

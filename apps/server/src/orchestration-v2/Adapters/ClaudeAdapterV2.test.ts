@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - worktree tests build a real git repository.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
 import type {
@@ -9606,6 +9609,112 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           status: "active",
           checks: 2,
         });
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+  });
+
+  describe("subagent worktrees", () => {
+    // A repository with one commit and a linked worktree on branch "feature".
+    const makeRepositoryWithWorktree = Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = NodeFS.realpathSync(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-worktree-" }),
+      );
+      const repository = `${root}/repo`;
+      const worktree = `${root}/repo-feature`;
+      const git = (cwd: string, ...args: ReadonlyArray<string>) =>
+        NodeChildProcess.execFileSync("git", [...args], {
+          cwd,
+          stdio: "ignore",
+          env: {
+            ...process.env,
+            GIT_AUTHOR_NAME: "t3",
+            GIT_AUTHOR_EMAIL: "t3@example.com",
+            GIT_COMMITTER_NAME: "t3",
+            GIT_COMMITTER_EMAIL: "t3@example.com",
+          },
+        });
+      NodeFS.mkdirSync(repository);
+      git(repository, "init", "-q");
+      git(repository, "commit", "-q", "--allow-empty", "-m", "init");
+      git(repository, "worktree", "add", "-q", "-b", "feature", worktree);
+      NodeFS.mkdirSync(`${worktree}/nested`);
+      return { root, repository, worktree };
+    });
+
+    it.effect("recognizes a linked worktree and its branch from any folder inside it", () =>
+      Effect.gen(function* () {
+        const { root, repository, worktree } = yield* makeRepositoryWithWorktree;
+        const expected = { path: worktree, branch: "feature" };
+        assert.deepEqual(yield* ClaudeAdapterV2.resolveLinkedGitWorktree(worktree), expected);
+        assert.deepEqual(
+          yield* ClaudeAdapterV2.resolveLinkedGitWorktree(`${worktree}/nested`),
+          expected,
+        );
+        assert.isNull(yield* ClaudeAdapterV2.resolveLinkedGitWorktree(repository));
+        assert.isNull(yield* ClaudeAdapterV2.resolveLinkedGitWorktree(root));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
+    it.effect("records the worktree a subagent's tool calls run in", () =>
+      Effect.gen(function* () {
+        const { repository, worktree } = yield* makeRepositoryWithWorktree;
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("worktree-attempt"),
+            text: "Fix it in a worktree.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId: "agent-worktree",
+            toolUseId: "toolu_worktree_agent",
+            uuid: "00000000-0000-4000-8000-000000000701",
+          }),
+        );
+        const hook = harness.getOpenedOptions()?.hooks?.PreToolUse?.[0]?.hooks[0];
+        assert.isDefined(hook);
+        const callFrom = (cwd: string, agentId: string | undefined) =>
+          Effect.promise(() =>
+            hook!(
+              {
+                hook_event_name: "PreToolUse",
+                session_id: WAKE_NATIVE_SESSION,
+                transcript_path: "/tmp/transcript.jsonl",
+                cwd,
+                ...(agentId === undefined ? {} : { agent_id: agentId }),
+                tool_name: "Bash",
+                tool_input: { command: "ls" },
+                tool_use_id: "toolu_ls",
+              } as Parameters<NonNullable<typeof hook>>[0],
+              "toolu_ls",
+              { signal: new AbortController().signal },
+            ),
+          );
+        // The main agent in a worktree, and a subagent in the main checkout, are not recorded.
+        assert.deepEqual(yield* callFrom(worktree, undefined), {});
+        yield* callFrom(worktree, "agent-worktree");
+        yield* callFrom(repository, "agent-worktree");
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "worktree-result", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const worktrees = harness.events.flatMap((event) =>
+          event.type === "subagent.updated" && event.subagent.worktree !== undefined
+            ? [event.subagent.worktree]
+            : [],
+        );
+        assert.deepEqual(worktrees.at(-1), { path: worktree, branch: "feature" });
+        assert.isTrue(
+          worktrees.every((entry) => entry.path === worktree),
+          "a later call from another folder does not move the subagent",
+        );
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     );
   });

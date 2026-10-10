@@ -13,6 +13,7 @@ import {
   type ForkSessionResult,
   getSubagentMessages,
   query,
+  type HookCallback,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
   type PermissionResult,
@@ -819,6 +820,7 @@ export function makeClaudeQueryOptions(input: {
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly permissionMode?: PermissionMode;
   readonly canUseTool?: CanUseTool;
+  readonly hooks?: ClaudeQueryOptions["hooks"];
   readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
@@ -875,6 +877,7 @@ export function makeClaudeQueryOptions(input: {
     ...(input.allowedTools === undefined ? {} : { allowedTools: [...input.allowedTools] }),
     ...(input.disallowedTools === undefined ? {} : { disallowedTools: [...input.disallowedTools] }),
     ...(input.canUseTool === undefined ? {} : { canUseTool: input.canUseTool }),
+    ...(input.hooks === undefined ? {} : { hooks: input.hooks }),
     ...(input.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
       : {}),
@@ -2997,6 +3000,41 @@ export function claudeProposedPlan(input: unknown): string | null {
   return typeof plan === "string" && plan.trim().length > 0 ? plan.trim() : null;
 }
 
+/**
+ * The linked git worktree holding a folder: its top folder and checked-out
+ * branch. A worktree's top folder has a `.git` file pointing into the main
+ * repository's `.git/worktrees`; a main checkout, a submodule, or a folder
+ * outside any repository yields null. Reads files only, so it is cheap
+ * enough to run from a hook.
+ */
+export const resolveLinkedGitWorktree = Effect.fnUntraced(function* (folder: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  let directory = path.resolve(folder);
+  for (;;) {
+    const dotGit = path.join(directory, ".git");
+    const info = yield* fileSystem.stat(dotGit).pipe(Effect.option);
+    if (Option.isSome(info)) {
+      if (info.value.type !== "File") return null;
+      const pointer = yield* fileSystem.readFileString(dotGit).pipe(Effect.option);
+      const gitDir = Option.isSome(pointer)
+        ? /^gitdir:\s*(.+?)\s*$/m.exec(pointer.value)?.[1]
+        : undefined;
+      if (gitDir === undefined || !/[\\/]worktrees[\\/]/.test(gitDir)) return null;
+      const head = yield* fileSystem
+        .readFileString(path.resolve(directory, gitDir, "HEAD"))
+        .pipe(Effect.option);
+      const branch = Option.isSome(head)
+        ? (/^ref: refs\/heads\/(.+)$/.exec(head.value.trim())?.[1] ?? null)
+        : null;
+      return { path: directory, branch };
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
+  }
+});
+
 export interface ClaudeAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: ClaudeSettings;
@@ -3340,6 +3378,45 @@ export function makeClaudeAdapterV2(
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
+
+        // A subagent run with worktree isolation works in its own git worktree,
+        // which no SDK message names. Its tool calls report the folder they run
+        // in, so the first call from a subagent records that worktree on it.
+        const subagentsCheckedForWorktree = new Set<string>();
+        const observeSubagentWorktree = (
+          hookInput: Parameters<HookCallback>[0],
+          sessionCwd: string | null,
+        ) =>
+          Effect.gen(function* () {
+            const taskId = hookInput.agent_id;
+            if (
+              hookInput.hook_event_name !== "PreToolUse" ||
+              taskId === undefined ||
+              subagentsCheckedForWorktree.has(taskId)
+            ) {
+              return;
+            }
+            // Registered from task_started; a call that races ahead of it is
+            // checked again on the next one.
+            const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
+            if (subagent === undefined) return;
+            subagentsCheckedForWorktree.add(taskId);
+            const worktree = yield* resolveLinkedGitWorktree(hookInput.cwd);
+            if (worktree === null) return;
+            const sessionWorktree =
+              sessionCwd === null ? null : yield* resolveLinkedGitWorktree(sessionCwd);
+            if (sessionWorktree?.path === worktree.path) return;
+            subagent.task = { ...subagent.task, worktree, updatedAt: yield* DateTime.now };
+            yield* emitProviderEvent({
+              type: "subagent.updated",
+              driver: CLAUDE_PROVIDER,
+              subagent: subagent.task,
+            });
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.ignoreCause,
+          );
 
         // Claude emits retry progress but no recovered frame; the next
         // assistant message is the first reliable evidence of recovery.
@@ -7391,6 +7468,23 @@ export function makeClaudeAdapterV2(
                   allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
                 }),
             canUseTool,
+            hooks: {
+              // Observes only and never blocks: it answers after at most a few
+              // file reads, once per subagent.
+              PreToolUse: [
+                {
+                  hooks: [
+                    (hookInput) =>
+                      runPromise(
+                        observeSubagentWorktree(hookInput, turnInput.runtimePolicy.cwd),
+                      ).then(
+                        () => ({}),
+                        () => ({}),
+                      ),
+                  ],
+                },
+              ],
+            },
             onUserDialog,
             supportedDialogKinds: ["resume_return"],
           });

@@ -697,6 +697,16 @@ export const OrchestrationV2Subagent = Schema.Struct({
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
   status: OrchestrationV2SubagentStatus,
   progress: Schema.optional(Schema.String),
+  /**
+   * The git worktree the agent works in when it is not its parent's checkout,
+   * as the provider observed it. Absent when it shares the parent's checkout.
+   */
+  worktree: Schema.optional(
+    Schema.Struct({
+      path: TrimmedNonEmptyString,
+      branch: Schema.NullOr(TrimmedNonEmptyString),
+    }),
+  ),
   result: Schema.NullOr(Schema.String),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),

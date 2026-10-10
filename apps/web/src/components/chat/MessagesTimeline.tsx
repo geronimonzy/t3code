@@ -116,6 +116,8 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
+import { ContextUsageCard } from "./ContextUsageCard";
+import { parseContextUsageReport } from "./contextUsageReport";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
@@ -2795,6 +2797,8 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  // Claude's /context report renders as a compact card instead of its tables.
+  const contextReport = row.message.streaming ? null : parseContextUsageReport(messageText);
 
   return (
     <>
@@ -2808,18 +2812,22 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             request={ctx.citationRequest}
             listRef={ctx.listRef}
           >
-            <ChatMarkdown
-              text={messageText}
-              cwd={ctx.markdownCwd}
-              threadRef={ctx.threadRef ?? undefined}
-              isStreaming={Boolean(row.message.streaming)}
-              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-              skills={ctx.skills}
-              headingLevelOffset={MESSAGE_HEADING_LEVEL}
-              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-              onRunShellCommand={ctx.onRunShellCommand}
-              onImageExpand={ctx.onImageExpand}
-            />
+            {contextReport ? (
+              <ContextUsageCard report={contextReport} />
+            ) : (
+              <ChatMarkdown
+                text={messageText}
+                cwd={ctx.markdownCwd}
+                threadRef={ctx.threadRef ?? undefined}
+                isStreaming={Boolean(row.message.streaming)}
+                lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+                skills={ctx.skills}
+                headingLevelOffset={MESSAGE_HEADING_LEVEL}
+                onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+                onRunShellCommand={ctx.onRunShellCommand}
+                onImageExpand={ctx.onImageExpand}
+              />
+            )}
           </AssistantCitationSource>
         </div>
         <AssistantChangedFilesSection

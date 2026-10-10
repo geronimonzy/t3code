@@ -265,11 +265,14 @@ export function BranchPickerRefItem({
   index,
   value,
   disabled,
+  ownedWorktreePaths,
   onClick,
   onContextMenu,
 }: {
   branch: VcsRef;
   projectCwd: string | null;
+  /** Worktrees a thread works in; others are badged as having no thread. */
+  ownedWorktreePaths?: ReadonlySet<string> | undefined;
   index: number;
   value?: string;
   disabled?: boolean;
@@ -282,7 +285,9 @@ export function BranchPickerRefItem({
   const badge = refName.current
     ? "current"
     : hasSecondaryWorktree
-      ? "worktree"
+      ? ownedWorktreePaths && !ownedWorktreePaths.has(refName.worktreePath!)
+        ? "no thread"
+        : "worktree"
       : refName.isRemote
         ? "remote"
         : refName.isDefault

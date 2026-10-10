@@ -1,6 +1,7 @@
 import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  ownedWorktreePaths,
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
@@ -24,6 +25,21 @@ import {
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+describe("ownedWorktreePaths", () => {
+  it("collects worktrees that a live thread in the environment works in", () => {
+    const owned = ownedWorktreePaths(
+      [
+        { environmentId: "local", worktreePath: "/repo-a", archivedAt: null },
+        { environmentId: "local", worktreePath: "/repo-b", archivedAt: "2026-10-01T00:00:00Z" },
+        { environmentId: "remote", worktreePath: "/repo-c", archivedAt: null },
+        { environmentId: "local", worktreePath: null, archivedAt: null },
+      ],
+      "local",
+    );
+    expect([...owned]).toEqual(["/repo-a"]);
+  });
+});
 
 describe("resolvePreviousWorktreeSeed", () => {
   it("picks the most recently updated worktree thread", () => {

@@ -7,6 +7,7 @@ import {
   CheckIcon,
   CircleSlashIcon,
   CircleXIcon,
+  GitBranchIcon,
   MessageCircleQuestionIcon,
   UsersIcon,
 } from "lucide-react";
@@ -134,6 +135,9 @@ function SubagentChip(props: {
       <span className="max-w-[60%] shrink-0 truncate font-medium text-foreground">
         {chip.title}
       </span>
+      {chip.worktreeBranch !== null ? (
+        <GitBranchIcon className="size-3 flex-none text-muted-foreground" aria-hidden="true" />
+      ) : null}
       <span className={cn("min-w-0 truncate", SUBAGENT_STATE_TONE[chip.state])}>{detail}</span>
     </>
   );
@@ -166,6 +170,9 @@ function SubagentChip(props: {
         <div className="text-xs">
           <div className="font-medium">{chip.title}</div>
           <div className="text-muted-foreground">{detail}</div>
+          {chip.worktreeBranch !== null ? (
+            <div className="text-muted-foreground">Worktree: {chip.worktreeBranch}</div>
+          ) : null}
         </div>
       </TooltipPopup>
     </Tooltip>

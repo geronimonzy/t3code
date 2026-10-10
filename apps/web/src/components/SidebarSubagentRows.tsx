@@ -1,4 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { GitBranchIcon } from "lucide-react";
 import { memo, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -45,6 +46,12 @@ export const SidebarSubagentRows = memo(function SidebarSubagentRows(props: {
               <SubagentStateIcon state={row.state} />
             )}
             <span className="min-w-0 flex-1 truncate text-sidebar-foreground">{row.title}</span>
+            {row.worktreeBranch !== null ? (
+              <span className="flex min-w-0 max-w-[40%] shrink items-center gap-0.5 text-sidebar-muted-foreground">
+                <GitBranchIcon className="size-3 flex-none" aria-hidden="true" />
+                <span className="truncate">{row.worktreeBranch}</span>
+              </span>
+            ) : null}
             <span className={cn("shrink-0", SUBAGENT_STATE_TONE[row.state])}>
               {SUBAGENT_STATE_LABEL[row.state]}
             </span>

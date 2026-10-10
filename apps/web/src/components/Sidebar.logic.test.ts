@@ -2359,6 +2359,25 @@ describe("deriveSidebarSubagentRows", () => {
     expect(rows.size).toBe(1);
   });
 
+  it("shows a child's branch only when it works in a different worktree than its parent", () => {
+    const rows = deriveSidebarSubagentRows(
+      [
+        {
+          ...child("a", "running", "2026-10-08T00:00:01.000Z"),
+          branch: "worktree-agent-a",
+          worktreePath: "/repo/.claude/worktrees/agent-a",
+        },
+        { ...child("b", "running", "2026-10-08T00:00:02.000Z"), worktreePath: "/repo-feature" },
+        makeThreadFixture({ id: parentId, environmentId, worktreePath: "/repo-feature" }),
+      ],
+      new Set(),
+    );
+    expect(rows.get(parentKey)?.map((row) => row.worktreeBranch)).toEqual([
+      "worktree-agent-a",
+      null,
+    ]);
+  });
+
   it("keeps a finished child only while it lingers, with its outcome", () => {
     const threads = [
       child("a", "completed", "2026-10-08T00:00:01.000Z"),

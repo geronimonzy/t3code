@@ -33,6 +33,7 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import {
   subagentChipState,
+  subagentWorktreeBranch,
   type SubagentLifecycle,
   type SubagentStripChipState,
 } from "./chat/ComposerSubagentStrip.logic";
@@ -1457,7 +1458,14 @@ export function sortScopedProjectsForSidebar<
 
 type SidebarSubagentChildInput = Pick<
   SidebarThreadSummary,
-  "id" | "environmentId" | "title" | "lineage" | "archivedAt" | "createdAt"
+  | "id"
+  | "environmentId"
+  | "title"
+  | "lineage"
+  | "archivedAt"
+  | "createdAt"
+  | "branch"
+  | "worktreePath"
 > & {
   readonly subagentStatus?: OrchestrationV2Subagent["status"] | null | undefined;
 };
@@ -1467,6 +1475,8 @@ export interface SidebarSubagentRow {
   readonly threadRef: ScopedThreadRef;
   readonly title: string;
   readonly state: SubagentStripChipState;
+  /** The child's branch when it works in a different worktree than its parent. */
+  readonly worktreeBranch: string | null;
 }
 
 /** Child threads whose status the sidebar can track, keyed for linger tracking. */
@@ -1494,6 +1504,12 @@ export function deriveSidebarSubagentRows(
   lingeringKeys: ReadonlySet<string>,
 ): ReadonlyMap<string, ReadonlyArray<SidebarSubagentRow>> {
   const byParent = new Map<string, Array<SidebarSubagentRow & { readonly createdAt: string }>>();
+  const worktreeByThreadKey = new Map(
+    threads.map((thread) => [
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      thread.worktreePath,
+    ]),
+  );
   for (const thread of threads) {
     const parentThreadId = thread.lineage.parentThreadId;
     const status = thread.subagentStatus;
@@ -1511,11 +1527,16 @@ export function deriveSidebarSubagentRows(
     if (!working && !lingeringKeys.has(key)) continue;
     const parentKey = scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId));
     const rows = byParent.get(parentKey) ?? [];
+    const parentWorktree = worktreeByThreadKey.get(parentKey) ?? null;
     rows.push({
       key,
       threadRef,
       title: thread.title,
       state: subagentChipState(status),
+      worktreeBranch:
+        thread.worktreePath !== null && thread.worktreePath !== parentWorktree
+          ? subagentWorktreeBranch({ path: thread.worktreePath, branch: thread.branch })
+          : null,
       createdAt: thread.createdAt,
     });
     byParent.set(parentKey, rows);

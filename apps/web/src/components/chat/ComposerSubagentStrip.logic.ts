@@ -20,6 +20,8 @@ export interface SubagentStripChip {
   readonly title: string;
   readonly progress: string | null;
   readonly state: SubagentStripChipState;
+  /** The branch of the worktree the agent works in, when it is not the parent's checkout. */
+  readonly worktreeBranch: string | null;
 }
 
 export interface SubagentStrip {
@@ -42,6 +44,21 @@ export function subagentChipState(
 function chipTitle(subagent: OrchestrationV2Subagent): string {
   const title = subagent.title?.trim() || subagent.prompt.trim().split("\n", 1)[0] || "Subagent";
   return formatSubagentDisplayTitle(title);
+}
+
+/** A worktree's branch, or its folder name when it has none checked out. */
+export function subagentWorktreeBranch(
+  worktree: { readonly path: string; readonly branch: string | null } | undefined | null,
+): string | null {
+  if (!worktree) return null;
+  return (
+    worktree.branch ??
+    (worktree.path
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .at(-1) ||
+      null)
+  );
 }
 
 type TurnItem = OrchestrationV2ThreadProjection["turnItems"][number];
@@ -184,6 +201,7 @@ export function deriveSubagentStrip(
       title: chipTitle(subagent),
       progress: state === "working" && progress ? progress : null,
       state,
+      worktreeBranch: subagentWorktreeBranch(subagent.worktree),
     });
   }
   if (chips.length === 0) return null;

@@ -72,6 +72,19 @@ describe("deriveSubagentStrip", () => {
     ]);
   });
 
+  it("marks an agent working in its own worktree with that worktree's branch", () => {
+    const strip = deriveSubagentStrip(
+      turnOf(
+        subagent("a", { worktree: { path: "/repo/.claude/worktrees/agent-a", branch: "fix-a" } }),
+        subagent("b", { worktree: { path: "/repo/.claude/worktrees/agent-b", branch: null } }),
+        subagent("c"),
+      ),
+      new Set(),
+      5,
+    );
+    expect(strip?.visible.map((chip) => chip.worktreeBranch)).toEqual(["fix-a", "agent-b", null]);
+  });
+
   it("keeps a settled agent only while it lingers, with its outcome and no stale progress", () => {
     const turn = turnOf(
       subagent("a", { status: "completed", progress: "Last step" }),

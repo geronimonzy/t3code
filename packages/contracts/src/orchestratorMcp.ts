@@ -187,6 +187,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+  workspace: Schema.optional(
+    Schema.Literals(["inherit", "worktree"]).annotate({
+      description:
+        "Defaults to inherit: the child works in this thread's checkout. worktree gives it a new git worktree on its own branch, cut from this thread's branch; uncommitted changes here are not in it, and the worktree stays for review when the task ends.",
+    }),
+  ),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 

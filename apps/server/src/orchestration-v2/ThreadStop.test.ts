@@ -582,3 +582,33 @@ it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is
     assert.deepEqual(yield* threadState(threadId), { runs: ["running"], watched: [] });
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("starts a delegated task's child in the worktree prepared for it", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const parentThreadId = ThreadId.make("thread:worktree-parent");
+    yield* createWatchingThread(parentThreadId, 20);
+    yield* send(parentThreadId, "first", "start_immediately");
+    const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.at(-1)!;
+    const worktree = { path: "/worktrees/t3-task-1", branch: "t3/task-1" };
+    yield* orchestrator.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("delegate:worktree"),
+      parentThreadId,
+      parentRunId: parentRun.id,
+      parentNodeId: parentRun.rootNodeId!,
+      task: "work in a worktree",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      worktree,
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.at(-1)!;
+    assert.deepEqual(task.worktree, worktree);
+    const child = yield* orchestrator.getThreadProjection(task.childThreadId!);
+    assert.equal(child.thread.worktreePath, worktree.path);
+    assert.equal(child.thread.branch, worktree.branch);
+  }).pipe(Effect.provide(layerTest)),
+);

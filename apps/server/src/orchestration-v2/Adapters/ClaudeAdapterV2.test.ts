@@ -9718,7 +9718,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     );
 
-    it("records that a finished subagent's worktree was removed", () =>
+    it.effect("records that a finished subagent's worktree was removed", () =>
       Effect.gen(function* () {
         const { repository, worktree } = yield* makeRepositoryWithWorktree;
         const harness = yield* makeWakeHarness;
@@ -9782,7 +9782,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.deepEqual(worktrees.at(0), { path: worktree, branch: "feature" });
         assert.isNull(worktrees.at(-1));
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))));
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
   });
 
   describe("cost", () => {

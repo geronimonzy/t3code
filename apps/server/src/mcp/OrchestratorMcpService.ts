@@ -83,6 +83,7 @@ import {
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import {
@@ -605,10 +606,26 @@ function threadTitle(input: {
   return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
 }
 
-function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
-  return input.role === undefined || input.role === "general"
-    ? input.task
-    : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
+function taskPrompt(
+  input: OrchestratorMcpDelegateTaskInput,
+  worktree?: { readonly path: string; readonly branch: string; readonly base: string },
+): string {
+  const task =
+    input.role === undefined || input.role === "general"
+      ? input.task
+      : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
+  return worktree === undefined
+    ? task
+    : `You work in a new git worktree at ${worktree.path} on branch ${worktree.branch}, cut from ${worktree.base}. Uncommitted changes from the delegating checkout are not in it, and dependencies may not be installed yet: run the project's setup step before checks that need them.\n\n${task}`;
+}
+
+/** A short, stable suffix for names derived from a request, such as a task's branch. */
+function requestSuffix(value: string): string {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) + hash + value.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
 }
 
 function threadSettlement(
@@ -835,6 +852,7 @@ const make = Effect.gen(function* () {
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
+  const git = yield* GitWorkflow.GitWorkflowService;
 
   /** A caller-named project, which must exist before anything is recorded against it. */
   const requireProject = (projectId: ProjectId) =>
@@ -1845,6 +1863,35 @@ const make = Effect.gen(function* () {
           requestKey: key,
           operation: "delegate-task",
         });
+        // A worktree child starts on its own branch, cut from the parent's.
+        const worktree =
+          input.workspace === "worktree"
+            ? yield* Effect.gen(function* () {
+                const project = yield* requireProject(parent.thread.projectId);
+                const base = parent.thread.branch ?? "HEAD";
+                const created = yield* git
+                  .createWorktree({
+                    cwd: parent.thread.worktreePath ?? project.workspaceRoot,
+                    refName: base,
+                    newRefName: `t3/task-${requestSuffix(commandId)}`,
+                    ...(parent.thread.branch === null ? {} : { baseRefName: parent.thread.branch }),
+                    path: null,
+                  })
+                  .pipe(
+                    Effect.mapError((error) =>
+                      failure(
+                        "orchestration_error",
+                        `Unable to create a worktree for the delegated task: ${errorMessage(error)}`,
+                      ),
+                    ),
+                  );
+                return {
+                  path: created.worktree.path,
+                  branch: created.worktree.refName,
+                  base,
+                };
+              })
+            : undefined;
         const result = yield* threadManagement
           .dispatch({
             type: "delegated_task.request",
@@ -1854,8 +1901,11 @@ const make = Effect.gen(function* () {
             parentThreadId: scope.thread.threadId,
             parentRunId: parentRun.id,
             parentNodeId: parentRun.rootNodeId,
-            task: taskPrompt(input),
+            task: taskPrompt(input, worktree),
             ...(input.title === undefined ? {} : { title: input.title }),
+            ...(worktree === undefined
+              ? {}
+              : { worktree: { path: worktree.path, branch: worktree.branch } }),
             modelSelection: target.modelSelection,
             runtimeMode,
             interactionMode,
@@ -2494,6 +2544,7 @@ export const layer: Layer.Layer<
   OrchestratorMcpService,
   never,
   | Crypto.Crypto
+  | GitWorkflow.GitWorkflowService
   | ThreadManagementService.ThreadManagementService
   | ProviderRegistry.ProviderRegistry
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2

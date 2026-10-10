@@ -6567,6 +6567,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
+        ...(command.worktree === undefined
+          ? {}
+          : { branch: command.worktree.branch, worktreePath: command.worktree.path }),
       };
       const task: OrchestrationV2Subagent = {
         id: taskNodeId,
@@ -6584,6 +6587,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         title: command.title ?? null,
         model: command.modelSelection.model,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
+        ...(command.worktree === undefined ? {} : { worktree: command.worktree }),
         status: "running",
         result: null,
         startedAt: now,

@@ -1,6 +1,7 @@
 "use client";
 
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
+import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
@@ -29,6 +30,7 @@ function ScrollArea({
   scrollbarGutter = false,
   hideScrollbars = false,
   chainVerticalScroll = false,
+  overflowHintX = false,
   radius = "inherit",
   viewportTabIndex,
   ...props
@@ -40,6 +42,9 @@ function ScrollArea({
   scrollbarGutter?: boolean;
   hideScrollbars?: boolean;
   chainVerticalScroll?: boolean;
+  /** Marks a side that hides more content with a fade and a chevron, for
+   * wide content whose clipped edge would otherwise read as its end. */
+  overflowHintX?: boolean;
   /** The viewport clips to the parent's radius; "none" for a region flush to an edge. */
   radius?: "inherit" | "none";
   /** Override Base UI's focusable viewport when focusable descendants provide scroll access. */
@@ -48,7 +53,7 @@ function ScrollArea({
   return (
     <ScrollAreaPrimitive.Root
       className={cn(
-        "relative size-full min-h-0 overflow-hidden",
+        "group/scroll-area relative size-full min-h-0 overflow-hidden",
         radius === "none" ? "rounded-none" : "rounded-[inherit]",
         className,
       )}
@@ -70,6 +75,22 @@ function ScrollArea({
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
+      {overflowHintX && (
+        <>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 left-0 flex w-10 items-center justify-start bg-linear-to-r from-background to-transparent text-muted-foreground opacity-0 transition-opacity group-data-overflow-x-start/scroll-area:opacity-100"
+          >
+            <ChevronLeftIcon className="size-4" />
+          </div>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 right-0 flex w-10 items-center justify-end bg-linear-to-l from-background to-transparent text-muted-foreground opacity-0 transition-opacity group-data-overflow-x-end/scroll-area:opacity-100"
+          >
+            <ChevronRightIcon className="size-4" />
+          </div>
+        </>
+      )}
       {!hideScrollbars && (
         <>
           <ScrollBar orientation="vertical" />

@@ -942,8 +942,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     max-width: var(--chat-content-max-width);
   }
 
+  /* The row clips sideways overflow rather than the lane, so wide content
+     such as a table can grow past the lane into the row's free space. The row
+     is a size container so that content can tell how much space there is. */
   .messages-timeline-row-frame {
     padding-inline: 0;
+    overflow-x: clip;
+    container-type: inline-size;
   }
 
   .settings-slider {
@@ -2082,6 +2087,18 @@ code {
 
 /* Collapsed (default): single-line cells truncate so arbitrary chat content
    cannot blow the column out; the footer toggle expands cells to wrap. */
+/* In the timeline, a table wider than the lane grows outward, centred on it,
+   up to the row's width less a gutter, and only scrolls beyond that. A narrow
+   table keeps the lane's width. */
+.messages-timeline-row-frame .chat-markdown .chat-markdown-table-container {
+  position: relative;
+  left: 50%;
+  translate: -50% 0;
+  width: max-content;
+  min-width: 100%;
+  max-width: calc(100cqw - 2rem);
+}
+
 .chat-markdown .chat-markdown-table-container[data-expanded="false"] th,
 .chat-markdown .chat-markdown-table-container[data-expanded="false"] td {
   overflow: hidden;

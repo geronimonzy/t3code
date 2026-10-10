@@ -632,7 +632,13 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       className="chat-markdown-table-container"
       data-expanded={expanded ? "true" : "false"}
     >
-      <ScrollArea radius="none" chainVerticalScroll scrollFade className="w-full max-w-full">
+      <ScrollArea
+        radius="none"
+        chainVerticalScroll
+        scrollFade
+        overflowHintX
+        className="w-full max-w-full"
+      >
         <table ref={tableRef} {...props}>
           {children}
         </table>

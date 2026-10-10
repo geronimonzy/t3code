@@ -1581,7 +1581,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
       <div className="messages-timeline-row-frame">
-        <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
+        <div className="chat-content-lane" data-timeline-root="true">
           <TimelineRowContent row={item} />
         </div>
       </div>

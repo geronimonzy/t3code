@@ -1978,6 +1978,34 @@ code {
   font-size: 0.75rem;
 }
 
+/* Click-to-copy inline code: a copy cursor on hover, and a "Copied" label
+   above the span that takes no layout space. */
+.chat-markdown code[data-copyable-inline-code] {
+  position: relative;
+  cursor: copy;
+}
+
+.chat-markdown code[data-copyable-inline-code]:hover {
+  border-color: color-mix(in srgb, var(--contrast-foreground) 35%, var(--contrast-border));
+}
+
+.chat-markdown code[data-copied="true"]::after {
+  content: "Copied";
+  position: absolute;
+  bottom: calc(100% + 0.25rem);
+  left: 50%;
+  translate: -50% 0;
+  border-radius: 0.25rem;
+  background: var(--popover);
+  box-shadow: 0 0 0 1px var(--border);
+  padding: 0.1rem 0.4rem;
+  color: var(--popover-foreground);
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .chat-markdown pre {
   max-width: 100%;
   overflow-x: auto;

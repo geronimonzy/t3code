@@ -199,7 +199,7 @@ import {
   useOpenChangeRequestLink,
 } from "~/lib/openPullRequestLink";
 import { useOpenLink } from "../browser/useOpenLink";
-import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { useCopyToClipboard, writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import {
   isBrowserPreviewFile,
@@ -1213,6 +1213,9 @@ interface MarkdownFileLinkProps {
   /** Platform-specific menu label ("Reveal in Finder", ...); required for the
       reveal item to show. */
   revealLabel?: string | undefined;
+  /** A folder outside the workspace: the files panel cannot show it, so a
+      click copies its full path instead. */
+  copyOnClick?: boolean | undefined;
 }
 
 const MARKDOWN_FILE_LINK_CLASS_NAME = "chat-markdown-file-link";
@@ -1318,6 +1321,31 @@ const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
   CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
 );
 const MarkdownLinkContext = React.createContext(false);
+
+/**
+ * Inline code that copies its text on a plain click. A drag that selected
+ * text is left alone, so highlighting part of a span still works.
+ */
+function CopyableInlineCode({ children, ...props }: React.ComponentProps<"code">) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    timeout: 1200,
+    target: "inline code",
+  });
+  return (
+    <code
+      {...props}
+      data-copyable-inline-code=""
+      data-copied={isCopied ? "true" : undefined}
+      onClick={(event) => {
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed) return;
+        copyToClipboard(event.currentTarget.textContent ?? "");
+      }}
+    >
+      {children}
+    </code>
+  );
+}
 
 function expandableMarkdownImageProps(
   onImageExpand: ((preview: ExpandedImagePreview) => void) | undefined,
@@ -1885,6 +1913,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpenMedia,
   onReveal,
   revealLabel,
+  copyOnClick,
 }: MarkdownFileLinkProps) {
   const handleOpenInEditor = useCallback(() => {
     if (!onOpen) {
@@ -2153,7 +2182,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     <Tooltip>
       <TooltipTrigger
         render={
-          hasPrimaryAction ? (
+          hasPrimaryAction || copyOnClick ? (
             <ContextChip
               kind="mention"
               render={<a href={href} />}
@@ -2162,6 +2191,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                if (copyOnClick) {
+                  handleCopy(targetPath, "Folder path");
+                  return;
+                }
                 if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
                   handleOpenInEditor();
                   return;
@@ -2224,7 +2257,8 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.onOpenMedia === next.onOpenMedia &&
     previous.onReveal === next.onReveal &&
-    previous.revealLabel === next.revealLabel
+    previous.revealLabel === next.revealLabel &&
+    previous.copyOnClick === next.copyOnClick
   );
 }
 
@@ -2574,10 +2608,16 @@ function useChatMarkdownState({
           fileLinkMeta.basename.slice(fileLinkMeta.basename.lastIndexOf(".")),
         ) !== null;
       // Media outside the workspace keeps the expanded preview; other host
-      // files (a report in a temp dir) open read-only in the files panel.
+      // files (a report in a temp dir) open read-only in the files panel. A
+      // host folder has nothing to preview and no workspace tree to reveal it
+      // in, so it copies its path instead.
+      const isHostFolder =
+        fileLinkMeta.workspaceRelativePath === null && mediaSource?.endsWith("/") === true;
       const panelPath =
         fileLinkMeta.workspaceRelativePath ??
-        (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
+        (!canPreviewMedia && !isHostFolder && isAbsolutePath(fileLinkMeta.filePath)
+          ? fileLinkMeta.filePath
+          : null);
 
       return (
         <MarkdownFileLink
@@ -2586,6 +2626,7 @@ function useChatMarkdownState({
           iconPath={fileLinkMeta.filePath}
           displayPath={fileLinkMeta.displayPath}
           panelPath={panelPath}
+          copyOnClick={isHostFolder}
           line={fileLinkMeta.line}
           label={fileLinkLabel(
             {
@@ -3097,6 +3138,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip } = use(
       ChatMarkdownRendererContext,
     );
+    const insideLink = use(MarkdownLinkContext);
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
       const fileLinkMeta =
@@ -3107,6 +3149,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
           fileLinkMeta,
           `\`${codeText}\``,
           inlineCodeFilePathCandidate(codeText) ?? codeText.trim(),
+        );
+      }
+      if (!insideLink) {
+        return (
+          <CopyableInlineCode {...props} className={className}>
+            {children}
+          </CopyableInlineCode>
         );
       }
     }

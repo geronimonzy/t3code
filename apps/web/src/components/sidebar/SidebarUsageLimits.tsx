@@ -9,7 +9,7 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
 import { useServerConfigs } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
-import { getDriverOption } from "../settings/providerDriverMeta";
+import { providerClients } from "../settings/providerDriverMeta";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { formatResetTimestamp } from "../../timestampFormat";
 import {
@@ -70,7 +70,7 @@ function UsageWindowRow(props: {
 }
 
 function providerLabel(driver: SidebarUsageReport["driver"]): string {
-  return getDriverOption(driver)?.label ?? String(driver);
+  return providerClients.get(driver)?.label ?? String(driver);
 }
 
 /**

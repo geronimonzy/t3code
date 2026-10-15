@@ -1798,4 +1798,55 @@ layer("ProviderEventIngestorV2", (it) => {
       );
     }),
   );
+
+  it.effect("moves the thread's workspace where its provider session moved itself", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+      const threadId = rootEvent.threadId;
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const move = (worktreePath: string | null, branch: string | null) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          event: {
+            type: "provider_thread.workspace_moved",
+            driver: CODEX_DRIVER,
+            threadId,
+            worktreePath,
+            branch,
+          },
+        });
+      yield* eventSink.write({ events: [rootEvent] });
+
+      // Only the thread's metadata changes; its provider sessions stay attached.
+      const moved = yield* move("/repo/.claude/worktrees/feature", "feature");
+      assert.deepEqual(
+        moved.map((stored) => stored.event.type),
+        ["thread.metadata-updated"],
+      );
+      const thread = yield* projectionStore.getThread(threadId);
+      assert.deepEqual(
+        { worktreePath: thread.worktreePath, branch: thread.branch },
+        { worktreePath: "/repo/.claude/worktrees/feature", branch: "feature" },
+      );
+      assert.deepEqual(yield* move("/repo/.claude/worktrees/feature", "feature"), []);
+
+      yield* move(null, "main");
+      const returned = yield* projectionStore.getThread(threadId);
+      assert.deepEqual(
+        { worktreePath: returned.worktreePath, branch: returned.branch },
+        { worktreePath: null, branch: "main" },
+      );
+    }),
+  );
 });

@@ -591,6 +591,32 @@ export const layer: Layer.Layer<
                   })),
                 ];
           }
+          case "provider_thread.workspace_moved": {
+            // Written here rather than dispatched as thread.metadata.update: the
+            // provider session moved itself, so it must stay attached, and that
+            // command detaches every session on a workspace change.
+            const { threadId, worktreePath, branch } = input.event;
+            const thread = yield* projections.getThread(threadId).pipe(
+              Effect.catchTags({
+                ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+              }),
+            );
+            if (
+              thread === null ||
+              (thread.worktreePath === worktreePath && thread.branch === branch)
+            ) {
+              return [];
+            }
+            const now = yield* DateTime.now;
+            return [
+              yield* makeDomainEvent(input, {
+                type: "thread.metadata-updated",
+                threadId,
+                payload: { ...thread, worktreePath, branch, updatedAt: now },
+                occurredAt: now,
+              }),
+            ];
+          }
           case "provider_turn.updated":
             return [
               ...(["completed", "interrupted", "failed", "cancelled"].includes(
@@ -818,10 +844,14 @@ export const layer: Layer.Layer<
               );
             }),
           ),
+          // These rewrite the whole thread row, so they read and write under
+          // the thread's command lock.
           (effect) =>
             input.event.type === "app_thread.created"
               ? threadCommands.withLock(input.event.appThread.id, effect)
-              : effect,
+              : input.event.type === "provider_thread.workspace_moved"
+                ? threadCommands.withLock(input.event.threadId, effect)
+                : effect,
         ),
     });
   }),

@@ -407,6 +407,8 @@ export function routeProviderEvent(
         (event.providerThread.appThreadId !== null && ownsThread(event.providerThread.appThreadId));
       return belongs ? [true, addProviderThread(event.providerThread.id)] : [false, state];
     }
+    case "provider_thread.workspace_moved":
+      return [event.threadId === input.threadId, state];
     case "provider_turn.updated": {
       const isRoot = event.providerTurn.runAttemptId === input.attemptId;
       const belongs =

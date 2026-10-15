@@ -3336,13 +3336,13 @@ export function claudeProposedPlan(input: unknown): string | null {
 }
 
 /**
- * The linked git worktree holding a folder: its top folder and checked-out
- * branch. A worktree's top folder has a `.git` file pointing into the main
- * repository's `.git/worktrees`; a main checkout, a submodule, or a folder
- * outside any repository yields null. Reads files only, so it is cheap
- * enough to run from a hook.
+ * The git checkout holding a folder: its top folder, the repository's common
+ * git dir (shared by a main checkout and all its linked worktrees), whether
+ * it is a linked worktree, and its checked-out branch (null when detached).
+ * A folder outside any repository yields null. Reads files only, so it is
+ * cheap enough to run from a hook.
  */
-export const resolveLinkedGitWorktree = Effect.fnUntraced(function* (folder: string) {
+export const resolveGitCheckout = Effect.fnUntraced(function* (folder: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   let directory = path.resolve(folder);
@@ -3350,24 +3350,54 @@ export const resolveLinkedGitWorktree = Effect.fnUntraced(function* (folder: str
     const dotGit = path.join(directory, ".git");
     const info = yield* fileSystem.stat(dotGit).pipe(Effect.option);
     if (Option.isSome(info)) {
-      if (info.value.type !== "File") return null;
-      const pointer = yield* fileSystem.readFileString(dotGit).pipe(Effect.option);
-      const gitDir = Option.isSome(pointer)
-        ? /^gitdir:\s*(.+?)\s*$/m.exec(pointer.value)?.[1]
-        : undefined;
-      if (gitDir === undefined || !/[\\/]worktrees[\\/]/.test(gitDir)) return null;
-      const head = yield* fileSystem
-        .readFileString(path.resolve(directory, gitDir, "HEAD"))
-        .pipe(Effect.option);
+      let gitDir = dotGit;
+      let commonDir = dotGit;
+      if (info.value.type === "File") {
+        // A linked worktree (or a submodule) points at its own git dir; a
+        // worktree's git dir names the main repository's in `commondir`.
+        const pointer = yield* fileSystem.readFileString(dotGit).pipe(Effect.option);
+        const target = Option.isSome(pointer)
+          ? /^gitdir:\s*(.+?)\s*$/m.exec(pointer.value)?.[1]
+          : undefined;
+        if (target === undefined) return null;
+        gitDir = path.resolve(directory, target);
+        const common = yield* fileSystem
+          .readFileString(path.join(gitDir, "commondir"))
+          .pipe(Effect.option);
+        commonDir =
+          Option.isSome(common) && common.value.trim().length > 0
+            ? path.resolve(gitDir, common.value.trim())
+            : gitDir;
+      } else if (info.value.type !== "Directory") {
+        return null;
+      }
+      const head = yield* fileSystem.readFileString(path.join(gitDir, "HEAD")).pipe(Effect.option);
       const branch = Option.isSome(head)
         ? (/^ref: refs\/heads\/(.+)$/.exec(head.value.trim())?.[1] ?? null)
         : null;
-      return { path: directory, branch };
+      return {
+        path: directory,
+        commonDir: yield* fileSystem
+          .realPath(commonDir)
+          .pipe(Effect.orElseSucceed(() => commonDir)),
+        linked: commonDir !== gitDir,
+        branch,
+      };
     }
     const parent = path.dirname(directory);
     if (parent === directory) return null;
     directory = parent;
   }
+});
+
+/**
+ * The linked git worktree holding a folder: its top folder and checked-out
+ * branch. A main checkout, a submodule, or a folder outside any repository
+ * yields null.
+ */
+export const resolveLinkedGitWorktree = Effect.fnUntraced(function* (folder: string) {
+  const checkout = yield* resolveGitCheckout(folder);
+  return checkout?.linked === true ? { path: checkout.path, branch: checkout.branch } : null;
 });
 
 export interface ClaudeAdapterV2Options {
@@ -3435,7 +3465,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
         const now = yield* DateTime.now;
-        const session = providerSession({
+        let session = providerSession({
           providerSessionId: input.providerSessionId,
           providerInstanceId: adapterOptions.instanceId,
           cwd: input.runtimePolicy.cwd,
@@ -3797,6 +3827,51 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               type: "subagent.updated",
               driver: CLAUDE_PROVIDER,
               subagent: subagent.task,
+            });
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.ignoreCause,
+          );
+
+        // Where the main session works once Claude moved it itself; null
+        // until then, so consumers keep the thread's cwd.
+        let movedSessionCwd: string | null = null;
+        // Claude moves its own session between checkouts (EnterWorktree,
+        // ExitWorktree, a `cd`). A move into another checkout of the thread's
+        // repository moves the thread with it: its branch and changes follow,
+        // and later turns and a reopened session run there. A move within the
+        // checkout, or out of the repository, changes nothing.
+        const followSessionCwd = (
+          hookInput: Parameters<HookCallback>[0],
+          threadId: ThreadId,
+          threadCwd: string | null,
+        ) =>
+          Effect.gen(function* () {
+            // A subagent's own folder is handled by observeSubagentWorktree.
+            if (hookInput.hook_event_name !== "CwdChanged" || hookInput.agent_id !== undefined) {
+              return;
+            }
+            const from = movedSessionCwd ?? threadCwd;
+            if (from === null) return;
+            const current = yield* resolveGitCheckout(from);
+            const next = yield* resolveGitCheckout(hookInput.new_cwd);
+            if (
+              current === null ||
+              next === null ||
+              current.commonDir !== next.commonDir ||
+              current.path === next.path
+            ) {
+              return;
+            }
+            movedSessionCwd = hookInput.new_cwd;
+            session = { ...session, cwd: hookInput.new_cwd };
+            yield* emitProviderEvent({
+              type: "provider_thread.workspace_moved",
+              driver: CLAUDE_PROVIDER,
+              threadId,
+              worktreePath: next.linked ? next.path : null,
+              branch: next.branch,
             });
           }).pipe(
             Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -4530,7 +4605,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             .subagentLaunchToolUseId({
               sessionId: resume.nativeThreadId,
               agentId: resume.taskId,
-              dir: resume.context.input.runtimePolicy.cwd,
+              dir: movedSessionCwd ?? resume.context.input.runtimePolicy.cwd,
               threadId: resume.context.input.threadId,
               providerSessionId: input.providerSessionId,
             })
@@ -8453,7 +8528,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   hooks: [
                     (hookInput) =>
                       runPromise(
-                        observeSubagentWorktree(hookInput, turnInput.runtimePolicy.cwd),
+                        observeSubagentWorktree(
+                          hookInput,
+                          movedSessionCwd ?? turnInput.runtimePolicy.cwd,
+                        ),
+                      ).then(
+                        () => ({}),
+                        () => ({}),
+                      ),
+                  ],
+                },
+              ],
+              CwdChanged: [
+                {
+                  hooks: [
+                    (hookInput) =>
+                      runPromise(
+                        followSessionCwd(
+                          hookInput,
+                          turnInput.threadId,
+                          turnInput.runtimePolicy.cwd,
+                        ),
                       ).then(
                         () => ({}),
                         () => ({}),
@@ -9011,7 +9106,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           instanceId: adapterOptions.instanceId,
           driver: CLAUDE_PROVIDER,
           providerSessionId: input.providerSessionId,
-          providerSession: session,
+          // Read through: followSessionCwd replaces it when Claude moves the session.
+          get providerSession() {
+            return session;
+          },
           getModelContextWindow: (selection) =>
             resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, selection),
           events: Stream.fromEffectRepeat(Queue.take(events)),
@@ -9311,8 +9409,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const sourceNativeThreadId = yield* getNativeThreadId(forkInput.sourceProviderThread);
               yield* closeLiveQueryForNativeThread(sourceNativeThreadId);
               const upToMessageId = yield* resolveClaudeForkUpToMessageId(forkInput);
+              const forkDir = movedSessionCwd ?? input.runtimePolicy.cwd;
               const forkOptions: ForkSessionOptions = {
-                ...(input.runtimePolicy.cwd === null ? {} : { dir: input.runtimePolicy.cwd }),
+                ...(forkDir === null ? {} : { dir: forkDir }),
                 ...(upToMessageId === undefined ? {} : { upToMessageId }),
               };
               const forked = yield* queryRunner.forkSession({

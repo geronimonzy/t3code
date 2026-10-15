@@ -13741,6 +13741,85 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     );
+
+    it.effect("moves the thread when Claude moves its session to another checkout", () =>
+      Effect.gen(function* () {
+        const { root, repository, worktree } = yield* makeRepositoryWithWorktree;
+        const otherRepository = `${root}/other`;
+        NodeFS.mkdirSync(otherRepository);
+        NodeChildProcess.execFileSync("git", ["init", "-q"], {
+          cwd: otherRepository,
+          stdio: "ignore",
+        });
+        const mainBranch = NodeChildProcess.execFileSync("git", ["branch", "--show-current"], {
+          cwd: repository,
+          encoding: "utf8",
+        }).trim();
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("cwd-moved-attempt"),
+            text: "Work in a worktree.",
+            attachments: [],
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: repository },
+          }),
+        );
+        const hook = harness.getOpenedOptions()?.hooks?.CwdChanged?.[0]?.hooks[0];
+        assert.isDefined(hook);
+        const moveTo = (newCwd: string, agentId?: string) =>
+          Effect.promise(() =>
+            hook!(
+              {
+                hook_event_name: "CwdChanged",
+                session_id: WAKE_NATIVE_SESSION,
+                transcript_path: "/tmp/transcript.jsonl",
+                cwd: newCwd,
+                old_cwd: repository,
+                new_cwd: newCwd,
+                ...(agentId === undefined ? {} : { agent_id: agentId }),
+              } as Parameters<NonNullable<typeof hook>>[0],
+              undefined,
+              { signal: new AbortController().signal },
+            ),
+          );
+        NodeFS.mkdirSync(`${repository}/src`);
+
+        // A subagent's folder and a subfolder of the thread's checkout move nothing.
+        yield* moveTo(worktree, "agent-elsewhere");
+        yield* moveTo(`${repository}/src`);
+        assert.deepEqual(yield* moveTo(worktree), {});
+        assert.strictEqual(harness.runtime.providerSession.cwd, worktree);
+        // Within the worktree, or out to another repository, the thread stays.
+        yield* moveTo(`${worktree}/nested`);
+        yield* moveTo(otherRepository);
+        // Back in the main checkout, the thread returns to the project root.
+        yield* moveTo(repository);
+
+        // Events arrive in order, so the turn's end follows every move.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "cwd-moved-result", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const moves = harness.events.flatMap((event) =>
+          event.type === "provider_thread.workspace_moved"
+            ? [{ threadId: event.threadId, worktreePath: event.worktreePath, branch: event.branch }]
+            : [],
+        );
+        assert.deepEqual(moves, [
+          { threadId: harness.threadId, worktreePath: worktree, branch: "feature" },
+          { threadId: harness.threadId, worktreePath: null, branch: mainBranch },
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
   });
 
   describe("cost", () => {

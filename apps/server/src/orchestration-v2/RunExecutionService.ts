@@ -429,20 +429,33 @@ export function routeProviderEvent(
     case "subagent.updated": {
       const belongs = ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId);
       const coordinator = event.subagent;
+      // A subagent this run resumes (re-attributed to it after its launch run
+      // settled) brings its child thread along, so the child's root turn and
+      // activity land with the run now following it. Adapters emit this
+      // before the child thread's records.
+      const adopted =
+        ownsRun(coordinator.runId) &&
+        coordinator.childThreadId !== null &&
+        !state.ownedThreadIds.has(coordinator.childThreadId)
+          ? {
+              ...state,
+              ownedThreadIds: new Set([...state.ownedThreadIds, coordinator.childThreadId]),
+            }
+          : state;
       if (
         !ownsRun(coordinator.runId) ||
         coordinator.workflow === undefined ||
         coordinator.childThreadId === null
       ) {
-        return [belongs, state];
+        return [belongs, adopted];
       }
-      const workflowMemberParents = new Map(state.workflowMemberParents);
+      const workflowMemberParents = new Map(adopted.workflowMemberParents);
       for (const member of coordinator.workflow.agents) {
         if (member.childThreadId !== undefined) {
           workflowMemberParents.set(member.childThreadId, coordinator.childThreadId);
         }
       }
-      return [true, { ...state, workflowMemberParents }];
+      return [true, { ...adopted, workflowMemberParents }];
     }
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];

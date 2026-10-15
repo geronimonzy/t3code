@@ -88,6 +88,7 @@ import type * as ProviderContinuationRequests from "@t3tools/provider-core/serve
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as RunExecutionService from "../RunExecutionService.ts";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
 import { provideDeterministicTestRuntime } from "../testkit/DeterministicRuntime.ts";
 import { runOrchestratorV2Scenario } from "../testkit/OrchestratorScenario.ts";
@@ -9763,6 +9764,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             result: "The subagent finished with RESUME_SETTLE_DONE.",
           }),
         );
+        const resumeRunEventsStart = harness.events.length;
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -9825,6 +9827,38 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.lengthOf(resumedWorkIndexes, 1);
         assert.isAbove(resumedWorkIndexes[0] ?? -1, reopenIndex);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
+
+        // A resuming run that did not start out following the child thread
+        // (its subagent row was cancelled when the launch run settled) still
+        // gets the child's root turn: running on resume, then the outcome.
+        const resumeIdentity: RunExecutionService.ProviderEventRouteIdentity = {
+          threadId: harness.threadId,
+          runId: RunId.make("run-attempt-claude-wake-9c"),
+          attemptId: RunAttemptId.make("attempt-claude-wake-9c"),
+          providerThreadId: harness.providerThread.id,
+        };
+        let routing = RunExecutionService.makeProviderEventRoutingState({
+          identity: resumeIdentity,
+          providerTurnId: null,
+        });
+        const routedChildRootStatuses = harness.events
+          .slice(resumeRunEventsStart)
+          .flatMap((event) => {
+            const [routed, next] = RunExecutionService.routeProviderEvent(
+              event,
+              resumeIdentity,
+              routing,
+            );
+            routing = next;
+            return routed &&
+              event.type === "node.updated" &&
+              event.node.kind === "root_turn" &&
+              event.node.runId === null &&
+              event.node.nativeItemRef?.nativeId === SUBAGENT_TASK_ID
+              ? [event.node.status]
+              : [];
+          });
+        assert.deepEqual(routedChildRootStatuses, ["running", "completed"]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

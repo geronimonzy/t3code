@@ -782,6 +782,12 @@ export const OrchestrationV2Subagent = Schema.Struct({
   status: OrchestrationV2SubagentStatus,
   progress: Schema.optional(Schema.String),
   /**
+   * Set only when restart recovery ended a provider-native subagent that was
+   * still running, so clients can keep it visible as interrupted instead of
+   * treating it like a deliberate stop. Cleared when the subagent runs again.
+   */
+  endedBy: Schema.optional(Schema.Literal("restart")),
+  /**
    * The git worktree the agent works in when it is not its parent's checkout,
    * as the provider observed it. Absent when it shares the parent's checkout;
    * null once that worktree has been removed.

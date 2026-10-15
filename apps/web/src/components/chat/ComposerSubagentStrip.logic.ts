@@ -22,6 +22,8 @@ export interface SubagentStripChip {
   readonly title: string;
   readonly progress: string | null;
   readonly state: SubagentStripChipState;
+  /** Cut off by a restart: stays until resumed or dismissed, unlike a deliberate stop. */
+  readonly interrupted: boolean;
   /** The branch of the worktree the agent works in, when it is not the parent's checkout. */
   readonly worktreeBranch: string | null;
   readonly character: MascotCharacter;
@@ -172,11 +174,18 @@ export function lingeringSubagentIds(phases: SubagentStripPhases): ReadonlySet<s
   return ids;
 }
 
+/** Restart recovery ended it; it has no terminal outcome of its own to show. */
+export function isRestartInterrupted(subagent: OrchestrationV2Subagent): boolean {
+  return subagent.endedBy === "restart" && !isActiveSubagentStatus(subagent.status);
+}
+
 function spawnOrder(left: OrchestrationV2Subagent, right: OrchestrationV2Subagent): number {
   const at = (subagent: OrchestrationV2Subagent) =>
     DateTime.toEpochMillis(subagent.startedAt ?? subagent.updatedAt);
   return at(left) - at(right) || left.id.localeCompare(right.id);
 }
+
+const NO_DISMISSED_IDS: ReadonlySet<string> = new Set();
 
 /**
  * The strip for a thread: working agents plus recently settled ones, in spawn
@@ -188,9 +197,15 @@ export function deriveSubagentStrip(
   subagents: ReadonlyArray<OrchestrationV2Subagent>,
   lingeringIds: ReadonlySet<string>,
   maxVisible = SUBAGENT_STRIP_MAX_VISIBLE,
+  dismissedIds: ReadonlySet<string> = NO_DISMISSED_IDS,
 ): SubagentStrip | null {
   const shown = subagents
-    .filter((subagent) => isActiveSubagentStatus(subagent.status) || lingeringIds.has(subagent.id))
+    .filter(
+      (subagent) =>
+        isActiveSubagentStatus(subagent.status) ||
+        lingeringIds.has(subagent.id) ||
+        (isRestartInterrupted(subagent) && !dismissedIds.has(subagent.id)),
+    )
     .toSorted(spawnOrder);
   const chips: SubagentStripChip[] = [];
   let workingCount = 0;
@@ -204,6 +219,7 @@ export function deriveSubagentStrip(
       title: chipTitle(subagent),
       progress: state === "working" && progress ? progress : null,
       state,
+      interrupted: isRestartInterrupted(subagent),
       worktreeBranch: subagentWorktreeBranch(subagent.worktree),
       character: mascotCharacterForDriver(subagent.driver),
     });

@@ -50,6 +50,36 @@ function subagent(
 const turnOf = (...subagents: OrchestrationV2Subagent[]) => subagents;
 
 describe("deriveSubagentStrip", () => {
+  describe("restart-interrupted agents", () => {
+    const cut = (id: string, extra: Partial<OrchestrationV2Subagent> = {}) =>
+      subagent(id, { status: "cancelled", endedBy: "restart", ...extra });
+
+    it("stays past the linger window as an interrupted stopped chip", () => {
+      const strip = deriveSubagentStrip(turnOf(cut("a")), new Set());
+      expect(strip?.visible.map((chip) => [chip.state, chip.interrupted])).toEqual([
+        ["stopped", true],
+      ]);
+      expect(strip?.workingCount).toBe(0);
+    });
+
+    it("lets a deliberately stopped agent leave", () => {
+      const stopped = subagent("a", { status: "cancelled" });
+      expect(deriveSubagentStrip(turnOf(stopped), new Set())).toBeNull();
+    });
+
+    it("shows as working again once resumed", () => {
+      const resumed = subagent("a", { status: "running" });
+      const strip = deriveSubagentStrip(turnOf(resumed), new Set());
+      expect(strip?.visible.map((chip) => [chip.state, chip.interrupted])).toEqual([
+        ["working", false],
+      ]);
+    });
+
+    it("hides once dismissed", () => {
+      expect(deriveSubagentStrip(turnOf(cut("a")), new Set(), 3, new Set(["a"]))).toBeNull();
+    });
+  });
+
   it("is hidden when no subagent is working or lingering", () => {
     expect(deriveSubagentStrip([], new Set())).toBeNull();
     expect(deriveSubagentStrip(turnOf(subagent("a", { status: "completed" })), new Set())).toBe(

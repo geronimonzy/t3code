@@ -7698,7 +7698,7 @@ export default function ChatView(props: ChatViewProps) {
     revealToolCall,
   ]);
   const [subagentMascots] = useMascotsPreference();
-  const subagentStrip = useComposerSubagentStrip(
+  const { strip: subagentStrip, dismiss: dismissSubagentChip } = useComposerSubagentStrip(
     serverProjection,
     `${environmentId}:${activeThreadId}`,
   );
@@ -7710,9 +7710,10 @@ export default function ChatView(props: ChatViewProps) {
           strip={subagentStrip}
           mascots={subagentMascots}
           onOpenThread={onOpenRelatedThread}
+          onDismiss={dismissSubagentChip}
         />
       ),
-    [onOpenRelatedThread, subagentMascots, subagentStrip],
+    [dismissSubagentChip, onOpenRelatedThread, subagentMascots, subagentStrip],
   );
   // Settled, snoozed, and woke are thread state, not composer actions: each
   // gets one quiet line after the last message instead of a banner. A woken

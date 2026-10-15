@@ -53,7 +53,7 @@ let renderer: ReactTestRenderer;
 let strip: SubagentStrip | null = null;
 
 function Probe({ projection }: { projection: Projection }) {
-  const value = useComposerSubagentStrip(projection, "env:thread-1");
+  const { strip: value } = useComposerSubagentStrip(projection, "env:thread-1");
   useLayoutEffect(() => {
     strip = value;
   });

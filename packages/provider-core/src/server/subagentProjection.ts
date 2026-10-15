@@ -278,6 +278,8 @@ export const endOrphanedNativeSubagent = <E>(input: {
   readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "subagents" | "turnItems">;
   readonly subagentId: NodeId;
   readonly status: "interrupted" | "cancelled";
+  /** Marks the record as cut off by a restart rather than stopped on purpose. */
+  readonly endedBy?: "restart";
   readonly now: DateTime.Utc;
   readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly allocateEventId: () => Effect.Effect<EventId, E>;
@@ -307,7 +309,13 @@ export const endOrphanedNativeSubagent = <E>(input: {
         id: yield* input.allocateEventId(),
         type: "subagent.updated",
         driver: subagent.driver,
-        payload: { ...subagent, status, completedAt: now, updatedAt: now },
+        payload: {
+          ...subagent,
+          status,
+          ...(input.endedBy === undefined ? {} : { endedBy: input.endedBy }),
+          completedAt: now,
+          updatedAt: now,
+        },
       });
     }
     if (

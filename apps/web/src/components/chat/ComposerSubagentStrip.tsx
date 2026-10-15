@@ -11,7 +11,7 @@ import {
   MessageCircleQuestionIcon,
   UsersIcon,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { Mascot } from "../../mascot/Mascot";
@@ -26,6 +26,7 @@ import {
 } from "./ComposerSubagentStrip.logic";
 
 const NO_SUBAGENTS: ReadonlyArray<OrchestrationV2Subagent> = [];
+const NO_DISMISSED: ReadonlySet<string> = new Set();
 
 /**
  * The live subagent strip for a thread, or null while nothing is running.
@@ -34,7 +35,7 @@ const NO_SUBAGENTS: ReadonlyArray<OrchestrationV2Subagent> = [];
 export function useComposerSubagentStrip(
   projection: Pick<OrchestrationV2ThreadProjection, "subagents" | "turnItems"> | null,
   threadKey: string,
-): SubagentStrip | null {
+): { readonly strip: SubagentStrip | null; readonly dismiss: (id: string) => void } {
   const projectedSubagents = projection?.subagents;
   const turnItems = projection?.turnItems;
   const subagents = useMemo(
@@ -42,7 +43,25 @@ export function useComposerSubagentStrip(
     [projectedSubagents, turnItems],
   );
   const lingeringIds = useLingeringSubagentIds(subagents, threadKey);
-  return useMemo(() => deriveSubagentStrip(subagents, lingeringIds), [subagents, lingeringIds]);
+  // Dismissal is local to this client and thread; only restart-interrupted chips need it.
+  const [dismissed, setDismissed] = useState<{
+    readonly threadKey: string;
+    readonly ids: ReadonlySet<string>;
+  }>({ threadKey, ids: NO_DISMISSED });
+  const dismissedIds = dismissed.threadKey === threadKey ? dismissed.ids : NO_DISMISSED;
+  const dismiss = useCallback(
+    (id: string) =>
+      setDismissed((current) => ({
+        threadKey,
+        ids: new Set(current.threadKey === threadKey ? current.ids : NO_DISMISSED).add(id),
+      })),
+    [threadKey],
+  );
+  const strip = useMemo(
+    () => deriveSubagentStrip(subagents, lingeringIds, undefined, dismissedIds),
+    [subagents, lingeringIds, dismissedIds],
+  );
+  return { strip, dismiss };
 }
 
 export const SUBAGENT_STATE_LABEL = {
@@ -65,6 +84,7 @@ export function ComposerSubagentStrip(props: {
   readonly strip: SubagentStrip;
   readonly mascots: boolean;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly onDismiss: (id: string) => void;
 }) {
   const { strip } = props;
   const total = strip.visible.length + strip.overflow.length;
@@ -88,6 +108,7 @@ export function ComposerSubagentStrip(props: {
             chip={chip}
             mascots={props.mascots}
             onOpenThread={props.onOpenThread}
+            onDismiss={props.onDismiss}
           />
         ))}
         {strip.overflow.length > 0 ? (
@@ -124,10 +145,12 @@ function SubagentChip(props: {
   readonly chip: SubagentStripChip;
   readonly mascots: boolean;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly onDismiss: (id: string) => void;
 }) {
   const { chip } = props;
   const childThreadId = chip.childThreadId;
-  const detail = chip.progress ?? SUBAGENT_STATE_LABEL[chip.state];
+  const detail =
+    chip.progress ?? (chip.interrupted ? "Interrupted" : SUBAGENT_STATE_LABEL[chip.state]);
   const content = (
     <>
       {props.mascots ? <SubagentMascot state={chip.state} character={chip.character} /> : null}
@@ -144,7 +167,7 @@ function SubagentChip(props: {
   const className =
     "flex min-w-0 max-w-64 flex-1 basis-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-start text-xs";
   const label = `${chip.title}: ${detail}`;
-  return (
+  const tooltip = (
     <Tooltip>
       <TooltipTrigger
         delay={300}
@@ -176,6 +199,16 @@ function SubagentChip(props: {
         </div>
       </TooltipPopup>
     </Tooltip>
+  );
+  if (!chip.interrupted) return tooltip;
+  return (
+    <>
+      {tooltip}
+      <ComposerBanner.Dismiss
+        aria-label={`Dismiss ${chip.title}`}
+        onClick={() => props.onDismiss(chip.id)}
+      />
+    </>
   );
 }
 

@@ -3837,6 +3837,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // Where the main session works once Claude moved it itself; null
         // until then, so consumers keep the thread's cwd.
         let movedSessionCwd: string | null = null;
+        // The checkout the thread currently lives in. Cached because
+        // ExitWorktree(remove) can delete the old checkout before its hook
+        // runs, so the old folder must never be re-resolved.
+        let currentCheckout: { path: string; commonDir: string } | null = null;
         // Claude moves its own session between checkouts (EnterWorktree,
         // ExitWorktree, a `cd`). A move into another checkout of the thread's
         // repository moves the thread with it: its branch and changes follow,
@@ -3852,9 +3856,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (hookInput.hook_event_name !== "CwdChanged" || hookInput.agent_id !== undefined) {
               return;
             }
-            const from = movedSessionCwd ?? threadCwd;
-            if (from === null) return;
-            const current = yield* resolveGitCheckout(from);
+            if (currentCheckout === null) {
+              if (threadCwd === null) return;
+              currentCheckout = yield* resolveGitCheckout(threadCwd);
+            }
+            const current = currentCheckout;
             const next = yield* resolveGitCheckout(hookInput.new_cwd);
             if (
               current === null ||
@@ -3865,12 +3871,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return;
             }
             movedSessionCwd = hookInput.new_cwd;
-            session = { ...session, cwd: hookInput.new_cwd };
+            currentCheckout = { path: next.path, commonDir: next.commonDir };
+            session = { ...session, cwd: hookInput.new_cwd, updatedAt: yield* DateTime.now };
+            // Persist the new cwd so a later model change does not see a
+            // stale session cwd and restart the session.
+            yield* emitProviderEvent({
+              type: "provider_session.updated",
+              driver: CLAUDE_PROVIDER,
+              providerSession: session,
+            });
             yield* emitProviderEvent({
               type: "provider_thread.workspace_moved",
               driver: CLAUDE_PROVIDER,
               threadId,
-              worktreePath: next.linked ? next.path : null,
+              checkoutPath: next.path,
               branch: next.branch,
             });
           }).pipe(

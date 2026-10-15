@@ -106,6 +106,7 @@ const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
       layerEventSinkProvided,
       IdAllocator.layer,
       ProjectionStore.layer,
+      ProjectStore.layer,
       ThreadCommandExecutor.layer,
     ),
   ),

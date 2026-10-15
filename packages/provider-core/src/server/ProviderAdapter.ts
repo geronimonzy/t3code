@@ -107,7 +107,7 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("provider_thread.workspace_moved"),
     driver: ProviderDriverKind,
     threadId: ThreadId,
-    worktreePath: Schema.NullOr(Schema.String),
+    checkoutPath: Schema.String,
     branch: Schema.NullOr(Schema.String),
   }),
   Schema.Struct({

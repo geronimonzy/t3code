@@ -24,6 +24,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -31,6 +32,7 @@ import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3too
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
@@ -300,6 +302,9 @@ function compactUndefined<T extends Record<string, unknown>>(record: T): T {
   return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T;
 }
 
+const trimTrailingSeparators = (folder: string) =>
+  folder.length > 1 ? folder.replace(/[\\/]+$/, "") : folder;
+
 const decodeDomainEvent = Schema.decodeUnknownEffect(OrchestrationV2DomainEvent);
 
 export const layer: Layer.Layer<
@@ -308,12 +313,14 @@ export const layer: Layer.Layer<
   | EventSink.EventSinkV2
   | IdAllocator.IdAllocatorV2
   | ProjectionStore.ProjectionStoreV2
+  | ProjectStore.ProjectStoreV2
   | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   ProviderEventIngestorV2,
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const projectStore = yield* ProjectStore.ProjectStoreV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const analytics = yield* ProviderTurnAnalytics;
@@ -595,16 +602,25 @@ export const layer: Layer.Layer<
             // Written here rather than dispatched as thread.metadata.update: the
             // provider session moved itself, so it must stay attached, and that
             // command detaches every session on a workspace change.
-            const { threadId, worktreePath, branch } = input.event;
+            const { threadId, checkoutPath, branch } = input.event;
             const thread = yield* projections.getThread(threadId).pipe(
               Effect.catchTags({
                 ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
               }),
             );
-            if (
-              thread === null ||
-              (thread.worktreePath === worktreePath && thread.branch === branch)
-            ) {
+            if (thread === null) return [];
+            // A thread in its project's own root has no worktree path, so the
+            // destination counts as the project root only when it is that folder.
+            const project = yield* projectStore
+              .getShell(thread.projectId)
+              .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+            const worktreePath =
+              Option.isSome(project) &&
+              trimTrailingSeparators(project.value.workspaceRoot) ===
+                trimTrailingSeparators(checkoutPath)
+                ? null
+                : checkoutPath;
+            if (thread.worktreePath === worktreePath && thread.branch === branch) {
               return [];
             }
             const now = yield* DateTime.now;

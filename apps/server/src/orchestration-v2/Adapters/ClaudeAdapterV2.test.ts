@@ -13806,13 +13806,76 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.take(harness.terminalReceipts);
         const moves = harness.events.flatMap((event) =>
           event.type === "provider_thread.workspace_moved"
-            ? [{ threadId: event.threadId, worktreePath: event.worktreePath, branch: event.branch }]
+            ? [{ threadId: event.threadId, checkoutPath: event.checkoutPath, branch: event.branch }]
             : [],
         );
         assert.deepEqual(moves, [
-          { threadId: harness.threadId, worktreePath: worktree, branch: "feature" },
-          { threadId: harness.threadId, worktreePath: null, branch: mainBranch },
+          { threadId: harness.threadId, checkoutPath: worktree, branch: "feature" },
+          { threadId: harness.threadId, checkoutPath: repository, branch: mainBranch },
         ]);
+        // Each accepted move also persists the session's new cwd.
+        const sessionCwds = harness.events.flatMap((event) =>
+          event.type === "provider_session.updated" ? [event.providerSession.cwd] : [],
+        );
+        assert.deepEqual(sessionCwds.slice(-2), [worktree, repository]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("follows Claude back to the main checkout after its worktree was removed", () =>
+      Effect.gen(function* () {
+        const { repository, worktree } = yield* makeRepositoryWithWorktree;
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("cwd-removed-attempt"),
+            text: "Enter and remove a worktree.",
+            attachments: [],
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: repository },
+          }),
+        );
+        const hook = harness.getOpenedOptions()?.hooks?.CwdChanged?.[0]?.hooks[0];
+        assert.isDefined(hook);
+        const moveTo = (newCwd: string, oldCwd: string) =>
+          Effect.promise(() =>
+            hook!(
+              {
+                hook_event_name: "CwdChanged",
+                session_id: WAKE_NATIVE_SESSION,
+                transcript_path: "/tmp/transcript.jsonl",
+                cwd: newCwd,
+                old_cwd: oldCwd,
+                new_cwd: newCwd,
+              } as Parameters<NonNullable<typeof hook>>[0],
+              undefined,
+              { signal: new AbortController().signal },
+            ),
+          );
+        yield* moveTo(worktree, repository);
+        // ExitWorktree(remove) deletes the checkout before the hook runs.
+        NodeChildProcess.execFileSync("git", ["worktree", "remove", "--force", worktree], {
+          cwd: repository,
+          stdio: "ignore",
+        });
+        assert.isFalse(NodeFS.existsSync(worktree));
+        yield* moveTo(repository, worktree);
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "cwd-removed-result", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const moves = harness.events.flatMap((event) =>
+          event.type === "provider_thread.workspace_moved" ? [event.checkoutPath] : [],
+        );
+        assert.deepEqual(moves, [worktree, repository]);
       }).pipe(
         Effect.scoped,
         Effect.provide(

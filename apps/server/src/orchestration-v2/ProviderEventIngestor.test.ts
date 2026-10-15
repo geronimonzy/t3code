@@ -1,8 +1,9 @@
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  EventId,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -37,6 +38,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -57,10 +59,13 @@ const layerTestEventSink = EventSink.layer.pipe(
   Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),
 );
 
+const layerTestProjectStore = ProjectStore.layer.pipe(Layer.provide(layerTestDatabase));
+
 const layerTest = Layer.mergeAll(
   layerTestStores,
   layerTestEventSink,
   IdAllocator.layer,
+  layerTestProjectStore,
   ThreadCommandExecutor.layer,
   ProviderEventIngestor.layer.pipe(
     Layer.provide(
@@ -68,6 +73,7 @@ const layerTest = Layer.mergeAll(
         layerTestStores,
         layerTestEventSink,
         IdAllocator.layer,
+        layerTestProjectStore,
         ThreadCommandExecutor.layer,
       ),
     ),
@@ -1799,54 +1805,99 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
-  it.effect("moves the thread's workspace where its provider session moved itself", () =>
-    Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const rootEvent = yield* threadCreatedEvent(now);
-      if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
-      const threadId = rootEvent.threadId;
-      const providerSessionId = yield* idAllocator.allocate.providerSession({
-        providerInstanceId: modelSelection.instanceId,
-        threadId,
-      });
-      const move = (worktreePath: string | null, branch: string | null) =>
-        ingestor.ingestNormalized({
-          providerSessionId,
+  describe("provider_thread.workspace_moved", () => {
+    const setup = (workspaceRoot: string | null) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectStore = yield* ProjectStore.ProjectStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const rootEvent = yield* threadCreatedEvent(now);
+        if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+        const threadId = rootEvent.threadId;
+        if (workspaceRoot !== null) {
+          yield* projectStore.apply({
+            sequence: 0,
+            eventId: EventId.make("project-created"),
+            aggregateKind: "project",
+            aggregateId: rootEvent.payload.projectId,
+            occurredAt: DateTime.formatIso(now),
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "project.created",
+            payload: {
+              projectId: rootEvent.payload.projectId,
+              title: "Project",
+              workspaceRoot,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: DateTime.formatIso(now),
+              updatedAt: DateTime.formatIso(now),
+            },
+          });
+        }
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
           providerInstanceId: modelSelection.instanceId,
           threadId,
-          event: {
-            type: "provider_thread.workspace_moved",
-            driver: CODEX_DRIVER,
-            threadId,
-            worktreePath,
-            branch,
-          },
         });
-      yield* eventSink.write({ events: [rootEvent] });
+        yield* eventSink.write({ events: [rootEvent] });
+        const move = (checkoutPath: string, branch: string | null) =>
+          ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+            event: {
+              type: "provider_thread.workspace_moved",
+              driver: CODEX_DRIVER,
+              threadId,
+              checkoutPath,
+              branch,
+            },
+          });
+        const workspace = Effect.gen(function* () {
+          const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+          const thread = yield* projectionStore.getThread(threadId);
+          return { worktreePath: thread.worktreePath, branch: thread.branch };
+        });
+        return { move, workspace };
+      });
 
-      // Only the thread's metadata changes; its provider sessions stay attached.
-      const moved = yield* move("/repo/.claude/worktrees/feature", "feature");
-      assert.deepEqual(
-        moved.map((stored) => stored.event.type),
-        ["thread.metadata-updated"],
-      );
-      const thread = yield* projectionStore.getThread(threadId);
-      assert.deepEqual(
-        { worktreePath: thread.worktreePath, branch: thread.branch },
-        { worktreePath: "/repo/.claude/worktrees/feature", branch: "feature" },
-      );
-      assert.deepEqual(yield* move("/repo/.claude/worktrees/feature", "feature"), []);
+    it.effect("moves the thread's workspace where its provider session moved itself", () =>
+      Effect.gen(function* () {
+        const { move, workspace } = yield* setup("/repo");
 
-      yield* move(null, "main");
-      const returned = yield* projectionStore.getThread(threadId);
-      assert.deepEqual(
-        { worktreePath: returned.worktreePath, branch: returned.branch },
-        { worktreePath: null, branch: "main" },
-      );
-    }),
-  );
+        // Only the thread's metadata changes; its provider sessions stay attached.
+        const moved = yield* move("/repo/.claude/worktrees/feature", "feature");
+        assert.deepEqual(
+          moved.map((stored) => stored.event.type),
+          ["thread.metadata-updated"],
+        );
+        assert.deepEqual(yield* workspace, {
+          worktreePath: "/repo/.claude/worktrees/feature",
+          branch: "feature",
+        });
+        assert.deepEqual(yield* move("/repo/.claude/worktrees/feature", "feature"), []);
+
+        // Back in the project's own folder (a trailing slash does not matter).
+        yield* move("/repo/", "main");
+        assert.deepEqual(yield* workspace, { worktreePath: null, branch: "main" });
+      }),
+    );
+
+    it.effect("keeps a linked worktree as the workspace when the project is rooted in one", () =>
+      Effect.gen(function* () {
+        const { move, workspace } = yield* setup("/repo/.claude/worktrees/feature");
+
+        // The main checkout is not the project root here, so it is a worktree path.
+        yield* move("/repo", "main");
+        assert.deepEqual(yield* workspace, { worktreePath: "/repo", branch: "main" });
+
+        yield* move("/repo/.claude/worktrees/feature", "feature");
+        assert.deepEqual(yield* workspace, { worktreePath: null, branch: "feature" });
+      }),
+    );
+  });
 });

@@ -78,6 +78,10 @@ describe("deriveSubagentStrip", () => {
     it("hides once dismissed", () => {
       expect(deriveSubagentStrip(turnOf(cut("a")), new Set(), 3, new Set(["a"]))).toBeNull();
     });
+
+    it("hides once dismissed even while it still lingers", () => {
+      expect(deriveSubagentStrip(turnOf(cut("a")), new Set(["a"]), 3, new Set(["a"]))).toBeNull();
+    });
   });
 
   it("is hidden when no subagent is working or lingering", () => {

@@ -200,12 +200,12 @@ export function deriveSubagentStrip(
   dismissedIds: ReadonlySet<string> = NO_DISMISSED_IDS,
 ): SubagentStrip | null {
   const shown = subagents
-    .filter(
-      (subagent) =>
-        isActiveSubagentStatus(subagent.status) ||
-        lingeringIds.has(subagent.id) ||
-        (isRestartInterrupted(subagent) && !dismissedIds.has(subagent.id)),
-    )
+    .filter((subagent) => {
+      if (isActiveSubagentStatus(subagent.status)) return true;
+      // A dismissed interrupted chip goes at once, even while it lingers.
+      if (isRestartInterrupted(subagent)) return !dismissedIds.has(subagent.id);
+      return lingeringIds.has(subagent.id);
+    })
     .toSorted(spawnOrder);
   const chips: SubagentStripChip[] = [];
   let workingCount = 0;

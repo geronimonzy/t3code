@@ -13,7 +13,8 @@ const DISMISS_TRANSITION_MS = 220;
 export interface ComposerBannerStackItem {
   readonly id: string;
   readonly variant: ComposerBannerVariant;
-  readonly priority?: "urgent" | "activity" | "notice";
+  /** "critical" takes the front slot ahead of activity; reserve it for connection loss. */
+  readonly priority?: "critical" | "urgent" | "activity" | "notice";
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
@@ -31,6 +32,9 @@ export type ComposerBannerStackContent = Pick<
 type ComposerBannerStackEntry = ComposerBannerStackItem | ComposerBannerStackContent;
 
 function bannerPriority(item: ComposerBannerStackEntry) {
+  if (item.priority === "critical") {
+    return -1;
+  }
   if (item.priority === "activity") {
     return 0;
   }
@@ -38,6 +42,11 @@ function bannerPriority(item: ComposerBannerStackEntry) {
     return 1;
   }
   return 2;
+}
+
+/** Front item first; the rest peek behind it in order. */
+export function orderComposerBanners<T extends ComposerBannerStackEntry>(items: ReadonlyArray<T>) {
+  return items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
 }
 
 interface ComposerBannerStackProps {
@@ -87,8 +96,9 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     }
   }, [stackExpanded]);
 
-  // Activity stays attached. Urgency and severity only order the notices behind it.
-  const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
+  // Activity stays attached. Urgency and severity only order the notices behind it,
+  // except connection loss, which must stay readable and so takes the front.
+  const orderedItems = orderComposerBanners(items);
   const frontItem = orderedItems[0];
   if (!frontItem) {
     return (

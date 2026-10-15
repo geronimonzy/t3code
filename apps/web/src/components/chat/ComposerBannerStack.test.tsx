@@ -2,7 +2,7 @@ import { cloneElement, type ReactElement, type ReactNode } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
-import { ComposerBannerStack } from "./ComposerBannerStack";
+import { ComposerBannerStack, orderComposerBanners } from "./ComposerBannerStack";
 
 vi.mock("../ui/popover", () => ({
   Popover: "popover",
@@ -100,4 +100,20 @@ it("only offers notice details when the description cannot fit", async () => {
   position = "static";
   await act(() => resize());
   expect(details()).toHaveLength(0);
+});
+
+it("puts a critical notice ahead of activity and urgent notices", () => {
+  const entry = (id: string, priority: "critical" | "activity" | "urgent" | "notice") => ({
+    id,
+    priority,
+    variant: "default" as const,
+    content: null,
+  });
+  const ordered = orderComposerBanners([
+    entry("notice", "notice"),
+    entry("activity", "activity"),
+    entry("urgent", "urgent"),
+    entry("critical", "critical"),
+  ]);
+  expect(ordered.map((item) => item.id)).toEqual(["critical", "activity", "urgent", "notice"]);
 });

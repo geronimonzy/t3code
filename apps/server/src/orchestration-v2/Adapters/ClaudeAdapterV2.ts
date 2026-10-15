@@ -23,6 +23,7 @@ import {
   getSubagentMessages,
   query,
   type HookCallback,
+  type HookInput,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
   type PermissionResult,
@@ -3336,6 +3337,25 @@ export function claudeProposedPlan(input: unknown): string | null {
 }
 
 /**
+ * The folder Claude moved its session to, if the hook reports a move: a
+ * shell `cd` fires CwdChanged, while EnterWorktree and ExitWorktree change
+ * the session's folder without it and name the new one in their result.
+ */
+export function claudeMovedSessionCwd(hookInput: HookInput): string | null {
+  if (hookInput.hook_event_name === "CwdChanged") return hookInput.new_cwd;
+  if (hookInput.hook_event_name !== "PostToolUse") return null;
+  const response = hookInput.tool_response;
+  if (typeof response !== "object" || response === null) return null;
+  const folder =
+    hookInput.tool_name === "EnterWorktree"
+      ? (response as { worktreePath?: unknown }).worktreePath
+      : hookInput.tool_name === "ExitWorktree"
+        ? (response as { originalCwd?: unknown }).originalCwd
+        : undefined;
+  return typeof folder === "string" && folder.length > 0 ? folder : null;
+}
+
+/**
  * The git checkout holding a folder: its top folder, the repository's common
  * git dir (shared by a main checkout and all its linked worktrees), whether
  * it is a linked worktree, and its checked-out branch (null when detached).
@@ -3853,15 +3873,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) =>
           Effect.gen(function* () {
             // A subagent's own folder is handled by observeSubagentWorktree.
-            if (hookInput.hook_event_name !== "CwdChanged" || hookInput.agent_id !== undefined) {
-              return;
-            }
+            if (hookInput.agent_id !== undefined) return;
+            const newCwd = claudeMovedSessionCwd(hookInput);
+            if (newCwd === null) return;
             if (currentCheckout === null) {
               if (threadCwd === null) return;
               currentCheckout = yield* resolveGitCheckout(threadCwd);
             }
             const current = currentCheckout;
-            const next = yield* resolveGitCheckout(hookInput.new_cwd);
+            const next = yield* resolveGitCheckout(newCwd);
             if (
               current === null ||
               next === null ||
@@ -3870,9 +3890,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ) {
               return;
             }
-            movedSessionCwd = hookInput.new_cwd;
+            movedSessionCwd = newCwd;
             currentCheckout = { path: next.path, commonDir: next.commonDir };
-            session = { ...session, cwd: hookInput.new_cwd, updatedAt: yield* DateTime.now };
+            session = { ...session, cwd: newCwd, updatedAt: yield* DateTime.now };
             // Persist the new cwd so a later model change does not see a
             // stale session cwd and restart the session.
             yield* emitProviderEvent({
@@ -8559,6 +8579,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ],
               CwdChanged: [
                 {
+                  hooks: [
+                    (hookInput) =>
+                      runPromise(
+                        followSessionCwd(
+                          hookInput,
+                          turnInput.threadId,
+                          turnInput.runtimePolicy.cwd,
+                        ),
+                      ).then(
+                        () => ({}),
+                        () => ({}),
+                      ),
+                  ],
+                },
+              ],
+              PostToolUse: [
+                {
+                  matcher: "EnterWorktree|ExitWorktree",
                   hooks: [
                     (hookInput) =>
                       runPromise(

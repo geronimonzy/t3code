@@ -13860,6 +13860,86 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
+    it.effect("moves the thread on EnterWorktree and ExitWorktree, which fire no CwdChanged", () =>
+      Effect.gen(function* () {
+        const { repository, worktree } = yield* makeRepositoryWithWorktree;
+        const mainBranch = NodeChildProcess.execFileSync("git", ["branch", "--show-current"], {
+          cwd: repository,
+          encoding: "utf8",
+        }).trim();
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("worktree-tools-attempt"),
+            text: "Work in a worktree.",
+            attachments: [],
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: repository },
+          }),
+        );
+        const matcher = harness.getOpenedOptions()?.hooks?.PostToolUse?.[0];
+        assert.strictEqual(matcher?.matcher, "EnterWorktree|ExitWorktree");
+        const hook = matcher?.hooks[0];
+        assert.isDefined(hook);
+        const toolDone = (toolName: string, toolResponse: unknown) =>
+          Effect.promise(() =>
+            hook!(
+              {
+                hook_event_name: "PostToolUse",
+                session_id: WAKE_NATIVE_SESSION,
+                transcript_path: "/tmp/transcript.jsonl",
+                cwd: repository,
+                tool_name: toolName,
+                tool_input: {},
+                tool_response: toolResponse,
+                tool_use_id: `toolu_${toolName}`,
+              } as Parameters<NonNullable<typeof hook>>[0],
+              `toolu_${toolName}`,
+              { signal: new AbortController().signal },
+            ),
+          );
+
+        yield* toolDone("EnterWorktree", {
+          worktreePath: worktree,
+          worktreeBranch: "feature",
+          message: "Entered.",
+        });
+        // ExitWorktree(remove) deletes the worktree before the hook runs.
+        NodeChildProcess.execFileSync("git", ["worktree", "remove", "--force", worktree], {
+          cwd: repository,
+          stdio: "ignore",
+        });
+        yield* toolDone("ExitWorktree", {
+          action: "remove",
+          originalCwd: repository,
+          worktreePath: worktree,
+          message: "Removed.",
+        });
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "worktree-tools-result", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const moves = harness.events.flatMap((event) =>
+          event.type === "provider_thread.workspace_moved"
+            ? [{ checkoutPath: event.checkoutPath, branch: event.branch }]
+            : [],
+        );
+        assert.deepEqual(moves, [
+          { checkoutPath: worktree, branch: "feature" },
+          { checkoutPath: repository, branch: mainBranch },
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
     it.effect("follows Claude back to the main checkout after its worktree was removed", () =>
       Effect.gen(function* () {
         const { repository, worktree } = yield* makeRepositoryWithWorktree;

@@ -2359,7 +2359,9 @@ export default function ChatView(props: ChatViewProps) {
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
   const compactEmbed = useIsCompactEmbed();
-  const rightPanelOpen = rightPanelState.isOpen;
+  // Compact embed shows no side panels; treating them as closed also keeps a
+  // persisted maximized panel from collapsing the chat column.
+  const rightPanelOpen = rightPanelState.isOpen && !compactEmbed;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const activeTerminalDrawerPresence = usePanelPresence(
@@ -11444,7 +11446,7 @@ export default function ChatView(props: ChatViewProps) {
           ) : null}
         </WizardPopup>
       </Dialog>
-      {rightPanelControlsAtRoot && !compactEmbed ? panelLayoutControls : null}
+      {rightPanelControlsAtRoot ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -12089,7 +12091,7 @@ export default function ChatView(props: ChatViewProps) {
         ))}
       </div>
 
-      {!compactEmbed && rightPanelPresent && !shouldUsePlanSidebarSheet && activeThreadRef ? (
+      {rightPanelPresent && !shouldUsePlanSidebarSheet && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
           open={rightPanelOpen}
@@ -12135,7 +12137,7 @@ export default function ChatView(props: ChatViewProps) {
           {rightPanelContent}
         </RightPanelTabs>
       ) : null}
-      {!compactEmbed && rightPanelPresent && shouldUsePlanSidebarSheet && activeThreadRef ? (
+      {rightPanelPresent && shouldUsePlanSidebarSheet && activeThreadRef ? (
         <RightPanelSheet
           animationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
           open={rightPanelOpen}

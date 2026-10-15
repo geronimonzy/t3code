@@ -3099,6 +3099,8 @@ interface ActiveClaudeToolCall {
 // keyed by the tool_use_id that launches it.
 interface PendingClaudeSubagentLaunch {
   readonly model?: string;
+  // Context from a reply that arrived before task_started registered it.
+  readonly usage?: OrchestrationV2SubagentUsage;
   readonly effort?: string;
   // parent_tool_use_id of the subagent whose own Agent call launches this one.
   readonly ownerToolUseId?: string;
@@ -7332,29 +7334,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? undefined
                 : canonicalClaudeSubagentModel(subagentModelCatalog, snapshotModel);
             if (parentToolUseId !== null && model !== undefined) {
+              // The subagent's own context, from its latest API response. The
+              // window follows the parent's selection when it runs the same
+              // model, since that selection carries the context-size option.
+              const usage =
+                message.message.usage === undefined || message.message.model === "<synthetic>"
+                  ? undefined
+                  : {
+                      context: claudeProviderTurnTokenUsage(
+                        message.message.usage,
+                        model === context.input.modelSelection.model
+                          ? context.input.modelSelection
+                          : { instanceId: context.input.modelSelection.instanceId, model },
+                        DateTime.formatIso(now),
+                      ),
+                    };
               const subagent = yield* resolveSubagentByToolUseId(context, parentToolUseId);
               if (subagent === undefined) {
+                // Kept for task_started: this reply is replayed without the
+                // usage step, and a short subagent may send no other.
                 rememberPendingClaudeSubagentLaunch(
                   pendingSubagentLaunchesByToolUseId,
                   parentToolUseId,
-                  { model },
+                  { model, ...(usage === undefined ? {} : { usage }) },
                 );
               } else if (subagent.task.status === "running") {
-                // The subagent's own context, from its latest API response. The
-                // window follows the parent's selection when it runs the same
-                // model, since that selection carries the context-size option.
-                const usage =
-                  message.message.usage === undefined || message.message.model === "<synthetic>"
-                    ? undefined
-                    : {
-                        context: claudeProviderTurnTokenUsage(
-                          message.message.usage,
-                          model === context.input.modelSelection.model
-                            ? context.input.modelSelection
-                            : { instanceId: context.input.modelSelection.instanceId, model },
-                          DateTime.formatIso(now),
-                        ),
-                      };
                 const usageChanged =
                   usage !== undefined && claudeSubagentUsageChanged(subagent.task.usage, usage);
                 if (subagent.task.model !== model || usageChanged) {
@@ -7466,6 +7470,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 ...(model === undefined ? {} : { model }),
                 ...(launch?.effort === undefined ? {} : { effort: launch.effort }),
+                ...(launch?.usage === undefined ? {} : { usage: launch.usage }),
                 ...(owner === undefined ? {} : { owner }),
                 ...(isWorkflow
                   ? {

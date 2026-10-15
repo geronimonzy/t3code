@@ -9397,6 +9397,107 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("keeps the context of a subagent reply that arrives before task_started", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TOOL_USE_ID = "toolu-early-usage";
+        const TASK_ID = "task-early-usage";
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-early-usage"),
+            text: "Spawn a subagent.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              model: CLAUDE_TEST_MODEL_SELECTION.model,
+              id: "msg_early_launch",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: TOOL_USE_ID,
+                  name: "Agent",
+                  input: { description: "Early", prompt: "Answer quickly." },
+                },
+              ],
+              usage: { input_tokens: 90_000, output_tokens: 40 },
+            },
+            uuid: "00000000-0000-4000-8000-000000000b01",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          // Its only reply, before task_started registers it.
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: TOOL_USE_ID,
+            message: {
+              model: CLAUDE_TEST_MODEL_SELECTION.model,
+              id: "msg_early_reply",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: "Done." }],
+              usage: {
+                input_tokens: 5,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 12_000,
+                output_tokens: 3,
+              },
+            },
+            uuid: "00000000-0000-4000-8000-000000000b02",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "Early",
+            task_type: "local_agent",
+            uuid: "00000000-0000-4000-8000-000000000b03",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            status: "completed",
+            output_file: "",
+            summary: "Answered.",
+            uuid: "00000000-0000-4000-8000-000000000b04",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b05", result: "Done." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        const final = harness.events
+          .flatMap((event) =>
+            event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === TASK_ID
+              ? [event.subagent]
+              : [],
+          )
+          .at(-1);
+        assert.equal(final?.status, "completed");
+        assert.equal(final?.usage?.context?.usedTokens, 12_008);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("gives a nested subagent its own effort, else the one its owner runs at", () =>
     Effect.scoped(
       Effect.gen(function* () {

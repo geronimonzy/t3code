@@ -1,4 +1,5 @@
 import type { AuthSessionState, EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -66,6 +67,31 @@ export const fetchEnvironmentSessionState = Effect.fn(
   });
 });
 
+/**
+ * A failed fetch while the connection is dropping or coming back (network,
+ * proxy, 5xx, timeout) says nothing about the grant, so the last successful
+ * state stays. A rejected credential (`EnvironmentAuthInvalidError`) or a
+ * 200 with `authenticated: false` is definitive and revokes. The server stays
+ * authoritative: it checks scopes again when a command executes.
+ */
+export function retainLastGrant<E>(
+  result: AsyncResult.AsyncResult<AuthSessionState, E>,
+): AsyncResult.AsyncResult<AuthSessionState, E> {
+  if (!AsyncResult.isFailure(result)) return result;
+  const error = Cause.findErrorOption(result.cause);
+  if (Option.isSome(error) && isAuthRejection(error.value)) return result;
+  return Option.isSome(result.previousSuccess) ? result.previousSuccess.value : result;
+}
+
+function isAuthRejection(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "EnvironmentAuthInvalidError"
+  );
+}
+
 function makeEnvironmentSessionAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
 ) {
@@ -127,14 +153,40 @@ function makeEnvironmentSessionAtoms<R, E>(
     ).pipe(Atom.withLabel(`environment-prepared-connection:${environmentId}`)),
   );
 
-  // Keyed on the prepared connection's identity: a reconnect (new credential,
-  // new base URL) swaps the prepared value, which re-runs the fetch, so scope
-  // changes from re-pairing are picked up without an explicit refresh.
-  const sessionStateAtom = Atom.family((environmentId: EnvironmentId) =>
+  // The generation of the current established connection, null while it is
+  // connecting, offline, or dropped. A generation is one connect cycle.
+  const connectedGenerationAtom = Atom.family((environmentId: EnvironmentId) =>
+    runtime.atom(
+      followStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) =>
+              SubscriptionRef.changes(supervisor.state).pipe(
+                Stream.map((state) => (state.phase === "connected" ? state.generation : null)),
+                Stream.changes,
+              ),
+            ),
+          ),
+        ),
+      ),
+      { initialValue: null as number | null },
+    ),
+  );
+
+  // Keyed on the prepared connection and on the connected generation: a
+  // reconnect swaps both, which re-runs the fetch, so scope changes from
+  // re-pairing are picked up without an explicit refresh. The fetch only runs
+  // while connected: the prepared value appears mid-connect, when the server
+  // may still be unreachable, and a request then would fail for no reason.
+  const rawSessionStateAtom = Atom.family((environmentId: EnvironmentId) =>
     runtime
       .atom((get) => {
         const prepared = Option.getOrNull(get(preparedConnectionValueAtom(environmentId)));
-        if (prepared === null) {
+        const connected = Option.getOrNull(
+          AsyncResult.value(get(connectedGenerationAtom(environmentId))),
+        );
+        if (prepared === null || connected === null) {
           return Effect.never;
         }
         return Effect.gen(function* () {
@@ -154,8 +206,16 @@ function makeEnvironmentSessionAtoms<R, E>(
       .pipe(
         Atom.swr({ staleTime: 30_000, revalidateOnMount: true }),
         Atom.setIdleTTL(5 * 60_000),
-        Atom.withLabel(`environment-session-state:${environmentId}`),
+        Atom.withLabel(`environment-session-state-raw:${environmentId}`),
       ),
+  );
+
+  // Consumers see the last good grant through a transient failure; only a
+  // definitive answer (see `retainLastGrant`) replaces it.
+  const sessionStateAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => retainLastGrant(get(rawSessionStateAtom(environmentId)))).pipe(
+      Atom.withLabel(`environment-session-state:${environmentId}`),
+    ),
   );
 
   const sessionStateValueAtom = Atom.family((environmentId: EnvironmentId) =>

@@ -69,6 +69,7 @@ import {
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2UserInputQuestion,
   type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentUsage,
   type OrchestrationV2AppThread,
   type OrchestrationV2SubagentWorkflow,
   type OrchestrationV2WorkflowRunHandles,
@@ -220,6 +221,59 @@ export function claudeProviderTurnTokenUsage(
     updatedAt,
   };
 }
+
+function claudeTaskUsageCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : undefined;
+}
+
+/** A subagent's running totals from its task_progress or task_notification. */
+export function claudeSubagentTaskUsage(
+  message: SDKMessage,
+): Omit<OrchestrationV2SubagentUsage, "context"> | undefined {
+  const usage = field(message, "usage");
+  if (typeof usage !== "object" || usage === null) return undefined;
+  const totalTokens = claudeTaskUsageCount(Reflect.get(usage, "total_tokens"));
+  const toolUses = claudeTaskUsageCount(Reflect.get(usage, "tool_uses"));
+  const durationMs = claudeTaskUsageCount(Reflect.get(usage, "duration_ms"));
+  if (totalTokens === undefined && toolUses === undefined && durationMs === undefined) {
+    return undefined;
+  }
+  return {
+    ...(totalTokens === undefined ? {} : { totalTokens }),
+    ...(toolUses === undefined ? {} : { toolUses }),
+    ...(durationMs === undefined ? {} : { durationMs }),
+  };
+}
+
+/**
+ * Whether an update would change what the subagent's Usage shows. Duration
+ * alone does not count: it moves on every frame and rides along with the next
+ * real change.
+ */
+export function claudeSubagentUsageChanged(
+  previous: OrchestrationV2SubagentUsage | undefined,
+  next: OrchestrationV2SubagentUsage,
+): boolean {
+  if (next.context !== undefined) {
+    const before = previous?.context;
+    if (
+      before === undefined ||
+      before.usedTokens !== next.context.usedTokens ||
+      before.inputTokens !== next.context.inputTokens ||
+      before.outputTokens !== next.context.outputTokens ||
+      before.maxTokens !== next.context.maxTokens
+    ) {
+      return true;
+    }
+  }
+  return (
+    (next.totalTokens !== undefined && next.totalTokens !== previous?.totalTokens) ||
+    (next.toolUses !== undefined && next.toolUses !== previous?.toolUses)
+  );
+}
+
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 // Entry extensions the Claude SDK runs through node instead of executing.
@@ -5054,6 +5108,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly effort?: string;
           readonly owner?: ActiveClaudeSubagent;
           readonly progress?: string;
+          /** Merged into the recorded usage; omitted fields keep their last value. */
+          readonly usage?: OrchestrationV2SubagentUsage;
           /** Raw SDK frame, folded into the coordinator's workflow snapshot. */
           readonly workflowFrame?: unknown;
           readonly workflowName?: string;
@@ -5223,6 +5279,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }
               : {}),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
+            ...(input.usage === undefined
+              ? {}
+              : { usage: { ...priorTask?.usage, ...input.usage } }),
             ...(workflowWithThreads === undefined ? {} : { workflow: workflowWithThreads }),
             ...(input.result === undefined ? {} : { result: input.result }),
             ...(isReopen ? { startedAt: now } : {}),
@@ -7280,14 +7339,34 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   parentToolUseId,
                   { model },
                 );
-              } else if (subagent.task.status === "running" && subagent.task.model !== model) {
-                yield* updateClaudeSubagentNode({
-                  context,
-                  taskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
-                  toolUseId: parentToolUseId,
-                  model,
-                  status: subagent.task.status,
-                });
+              } else if (subagent.task.status === "running") {
+                // The subagent's own context, from its latest API response. The
+                // window follows the parent's selection when it runs the same
+                // model, since that selection carries the context-size option.
+                const usage =
+                  message.message.usage === undefined || message.message.model === "<synthetic>"
+                    ? undefined
+                    : {
+                        context: claudeProviderTurnTokenUsage(
+                          message.message.usage,
+                          model === context.input.modelSelection.model
+                            ? context.input.modelSelection
+                            : { instanceId: context.input.modelSelection.instanceId, model },
+                          DateTime.formatIso(now),
+                        ),
+                      };
+                const usageChanged =
+                  usage !== undefined && claudeSubagentUsageChanged(subagent.task.usage, usage);
+                if (subagent.task.model !== model || usageChanged) {
+                  yield* updateClaudeSubagentNode({
+                    context,
+                    taskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
+                    toolUseId: parentToolUseId,
+                    model,
+                    ...(usageChanged ? { usage } : {}),
+                    status: subagent.task.status,
+                  });
+                }
               }
             }
           }
@@ -7431,11 +7510,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // A workflow frame is worth an update even with an empty description:
             // it carries the phase plan, the member roster and the run's usage.
             const carriesWorkflowTelemetry = hasClaudeWorkflowSnapshot(message);
-            const isWorkflowCoordinator =
-              (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)?.task.workflow !==
-              undefined;
+            const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id);
+            const isWorkflowCoordinator = registered?.task.workflow !== undefined;
+            // A coordinator's totals already live in its workflow snapshot.
+            const usage = isWorkflowCoordinator ? undefined : claudeSubagentTaskUsage(message);
+            const usageChanged =
+              usage !== undefined && claudeSubagentUsageChanged(registered?.task.usage, usage);
             if (
-              (carriesWorkflowTelemetry || (progress.length > 0 && !isWorkflowCoordinator)) &&
+              (carriesWorkflowTelemetry ||
+                ((progress.length > 0 || usageChanged) && !isWorkflowCoordinator)) &&
               !context.ignoredTaskIds.has(message.task_id) &&
               !isBackgroundTask
             ) {
@@ -7444,6 +7527,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(progress.length === 0 ? {} : { progress }),
+                ...(usage === undefined ? {} : { usage }),
                 workflowFrame: message,
                 status: "running",
               });
@@ -7494,10 +7578,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               activeContext: context,
             });
             if (!wasBackgroundTask && !context.ignoredTaskIds.has(message.task_id)) {
+              const isWorkflowCoordinator =
+                (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)?.task.workflow !==
+                undefined;
+              const usage = isWorkflowCoordinator ? undefined : claudeSubagentTaskUsage(message);
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+                ...(usage === undefined ? {} : { usage }),
                 // Terminal usage totals arrive here, after the last snapshot.
                 workflowFrame: message,
                 result: message.summary,

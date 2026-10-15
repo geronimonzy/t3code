@@ -1,4 +1,4 @@
-import { ArrowDownUpIcon, CircleDollarSignIcon, GaugeIcon } from "lucide-react";
+import { ArrowDownUpIcon, CircleDollarSignIcon, GaugeIcon, WrenchIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -6,6 +6,7 @@ import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import {
   formatThreadContextUsage,
   formatThreadCostUsd,
+  formatThreadRunUsage,
   formatThreadTokenUsage,
   type ThreadUsageSummary,
 } from "./ThreadUsageSection.logic";
@@ -32,9 +33,10 @@ function UsageRow(props: { icon: ReactNode; label: string; value: string; note?:
   );
 }
 
-/** Context, tokens, and cost for the thread's active provider conversation. */
+/** Context, tokens, and cost for the thread's active provider conversation, or a subagent's own usage. */
 export function ThreadUsageSection({ usage }: { usage: ThreadUsageSummary }) {
   const tokens = usage.context ? formatThreadTokenUsage(usage.context) : null;
+  const run = usage.run ? formatThreadRunUsage(usage.run) : null;
   return (
     <ThreadDetailsSection headingId="thread-details-usage-heading" title="Usage">
       <div className="flex flex-col">
@@ -50,6 +52,14 @@ export function ThreadUsageSection({ usage }: { usage: ThreadUsageSummary }) {
             icon={<ArrowDownUpIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />}
             label="Last turn"
             value={tokens}
+          />
+        ) : null}
+        {run ? (
+          <UsageRow
+            icon={<WrenchIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />}
+            label="Run"
+            value={run}
+            note="Totals Claude reports for this subagent run."
           />
         ) : null}
         {usage.costUsd !== null ? (

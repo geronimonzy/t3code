@@ -386,6 +386,10 @@ const subagentChildShellMirrorsSubagentStatus = Effect.gen(function* () {
       },
     },
   });
+  const childUsage = {
+    context: { usedTokens: 21_007, maxTokens: 200_000, updatedAt: "2026-10-15T00:00:00.000Z" },
+    toolUses: 5,
+  };
   const updateSubagent = (status: "running" | "completed", at: DateTime.Utc) =>
     store.apply({
       id: EventId.make(`event:subagent-shell:task:${status}`),
@@ -416,6 +420,7 @@ const subagentChildShellMirrorsSubagentStatus = Effect.gen(function* () {
         startedAt: now,
         completedAt: status === "completed" ? at : null,
         updatedAt: at,
+        ...(status === "completed" ? { usage: childUsage } : {}),
       },
     });
   const shellStatuses = Effect.fnUntraced(function* (threadId: ThreadId) {
@@ -431,6 +436,16 @@ const subagentChildShellMirrorsSubagentStatus = Effect.gen(function* () {
 
   yield* updateSubagent("completed", later);
   assert.deepEqual(yield* shellStatuses(childThreadId), ["completed", "completed"]);
+  // Its usage rides along; the parent shell never shows it.
+  const childShells = [
+    (yield* store.getShellSnapshot()).threads.find((row) => row.id === childThreadId),
+    yield* store.getThreadShell(childThreadId),
+  ];
+  assert.deepEqual(
+    childShells.map((shell) => shell?.subagentUsage),
+    [childUsage, childUsage],
+  );
+  assert.isUndefined((yield* store.getThreadShell(parentThreadId))?.subagentUsage);
   // The parent owns the record but is not a subagent thread.
   assert.deepEqual(yield* shellStatuses(parentThreadId), [undefined, undefined]);
 });

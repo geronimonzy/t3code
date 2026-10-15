@@ -9238,6 +9238,165 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("records a subagent's own context and run totals on its record", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TOOL_USE_ID = "toolu-usage-subagent";
+        const TASK_ID = "task-usage-subagent";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-subagent-usage"),
+            text: "Spawn a subagent.",
+            attachments: [],
+          }),
+        );
+        const subagentResponse = (uuid: string, outputTokens: number) =>
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: TOOL_USE_ID,
+            message: {
+              model: CLAUDE_TEST_MODEL_SELECTION.model,
+              id: "msg_usage_subagent",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: "Looking." }],
+              usage: {
+                input_tokens: 10,
+                cache_creation_input_tokens: 990,
+                cache_read_input_tokens: 20_000,
+                output_tokens: outputTokens,
+              },
+            },
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        for (const frame of [
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              model: CLAUDE_TEST_MODEL_SELECTION.model,
+              id: "msg_usage_launch",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: TOOL_USE_ID,
+                  name: "Agent",
+                  input: { description: "Usage", prompt: "Look around." },
+                },
+              ],
+              usage: { input_tokens: 90_000, output_tokens: 40 },
+            },
+            uuid: "00000000-0000-4000-8000-000000000a01",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "Usage",
+            task_type: "local_agent",
+            uuid: "00000000-0000-4000-8000-000000000a02",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          subagentResponse("00000000-0000-4000-8000-000000000a03", 7),
+          // The CLI repeats a response's usage on each of its content blocks.
+          subagentResponse("00000000-0000-4000-8000-000000000a04", 7),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "Reading files",
+            usage: { total_tokens: 21_007, tool_uses: 3, duration_ms: 4_200 },
+            uuid: "00000000-0000-4000-8000-000000000a05",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            status: "completed",
+            output_file: "",
+            summary: "Looked around.",
+            usage: { total_tokens: 23_500, tool_uses: 5, duration_ms: 9_000 },
+            uuid: "00000000-0000-4000-8000-000000000a06",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000a07",
+            result: "Done.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        const records = harness.events.flatMap((event) =>
+          event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === TASK_ID
+            ? [event.subagent]
+            : [],
+        );
+        // The parent's own report still describes only the parent.
+        const parentUsage = harness.events.flatMap((event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage !== undefined
+            ? [event.providerTurn.tokenUsage]
+            : [],
+        );
+        assert.deepEqual(
+          parentUsage.map(({ usedTokens }) => usedTokens),
+          [90_040],
+        );
+        const maxTokens = parentUsage[0]?.maxTokens;
+        assert.isNumber(maxTokens);
+        const final = records.at(-1);
+        assert.equal(final?.status, "completed");
+        // Its own context, never the parent's 90k.
+        assert.deepEqual(
+          {
+            usedTokens: final?.usage?.context?.usedTokens,
+            inputTokens: final?.usage?.context?.inputTokens,
+            outputTokens: final?.usage?.context?.outputTokens,
+            maxTokens: final?.usage?.context?.maxTokens,
+          },
+          { usedTokens: 21_007, inputTokens: 21_000, outputTokens: 7, maxTokens },
+        );
+        // One update per change: start, the response (its repeated block adds
+        // none), progress, then the notification's final totals.
+        assert.deepEqual(
+          records.map(({ usage }) =>
+            usage === undefined
+              ? null
+              : {
+                  totalTokens: usage.totalTokens,
+                  toolUses: usage.toolUses,
+                  durationMs: usage.durationMs,
+                },
+          ),
+          [
+            null,
+            { totalTokens: undefined, toolUses: undefined, durationMs: undefined },
+            { totalTokens: 21_007, toolUses: 3, durationMs: 4_200 },
+            { totalTokens: 23_500, toolUses: 5, durationMs: 9_000 },
+          ],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("gives a nested subagent its own effort, else the one its owner runs at", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -756,6 +756,37 @@ export const OrchestrationV2SubagentWorkflow = Schema.Struct({
 });
 export type OrchestrationV2SubagentWorkflow = typeof OrchestrationV2SubagentWorkflow.Type;
 
+/** Live context usage reported by the provider mid-turn (#8144). */
+export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
+  usedTokens: NonNegativeInt,
+  maxTokens: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  inputTokens: Schema.optional(NonNegativeInt),
+  cachedInputTokens: Schema.optional(NonNegativeInt),
+  outputTokens: Schema.optional(NonNegativeInt),
+  reasoningOutputTokens: Schema.optional(NonNegativeInt),
+  /** Prompt cache lifetime the provider wrote with this report. Clients treat
+      the cache as cold once `updatedAt` is this old. */
+  promptCacheTtlMs: Schema.optional(PositiveInt),
+  /** ISO timestamp of the provider's report; string so wire encoding is stable. */
+  updatedAt: Schema.String,
+});
+export type OrchestrationV2ProviderTurnTokenUsage =
+  typeof OrchestrationV2ProviderTurnTokenUsage.Type;
+
+/**
+ * A provider-native subagent's own usage, for subagents that have no provider
+ * turns of their own (Claude). `context` is the subagent's latest API response
+ * in the provider turn's shape; the totals are the provider's running figures
+ * for the subagent's current run.
+ */
+export const OrchestrationV2SubagentUsage = Schema.Struct({
+  context: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
+  totalTokens: Schema.optional(NonNegativeInt),
+  toolUses: Schema.optional(NonNegativeInt),
+  durationMs: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationV2SubagentUsage = typeof OrchestrationV2SubagentUsage.Type;
+
 export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
@@ -781,6 +812,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
   status: OrchestrationV2SubagentStatus,
   progress: Schema.optional(Schema.String),
+  usage: Schema.optional(OrchestrationV2SubagentUsage),
   /**
    * Set only when restart recovery ended a provider-native subagent that was
    * still running, so clients can keep it visible as interrupted instead of
@@ -1086,23 +1118,6 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
   updatedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2ContextHandoff = typeof OrchestrationV2ContextHandoff.Type;
-
-/** Live context usage reported by the provider mid-turn (#8144). */
-export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
-  usedTokens: NonNegativeInt,
-  maxTokens: Schema.optional(Schema.NullOr(NonNegativeInt)),
-  inputTokens: Schema.optional(NonNegativeInt),
-  cachedInputTokens: Schema.optional(NonNegativeInt),
-  outputTokens: Schema.optional(NonNegativeInt),
-  reasoningOutputTokens: Schema.optional(NonNegativeInt),
-  /** Prompt cache lifetime the provider wrote with this report. Clients treat
-      the cache as cold once `updatedAt` is this old. */
-  promptCacheTtlMs: Schema.optional(PositiveInt),
-  /** ISO timestamp of the provider's report; string so wire encoding is stable. */
-  updatedAt: Schema.String,
-});
-export type OrchestrationV2ProviderTurnTokenUsage =
-  typeof OrchestrationV2ProviderTurnTokenUsage.Type;
 
 export const OrchestrationV2ProviderTurn = Schema.Struct({
   id: ProviderTurnId,
@@ -1998,6 +2013,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
    * other threads and by servers that predate it.
    */
   subagentStatus: Schema.optional(OrchestrationV2SubagentStatus),
+  /** That record's usage, when its provider reports one. */
+  subagentUsage: Schema.optional(OrchestrationV2SubagentUsage),
   lastError: Schema.optional(Schema.NullOr(Schema.String)),
   lastErrorClass: Schema.optional(Schema.NullOr(OrchestrationV2ProviderFailureClass)),
   usageLimitResetAt: Schema.optional(Schema.NullOr(IsoDateTime)),

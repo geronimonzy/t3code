@@ -2,9 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
 import {
+  deriveThreadUsageSummary,
   formatThreadContextUsage,
   formatThreadCostUsd,
+  formatThreadRunUsage,
   formatThreadTokenUsage,
+  hasThreadUsage,
 } from "./ThreadUsageSection.logic";
 
 const snapshot = (overrides: Partial<ContextWindowSnapshot>): ContextWindowSnapshot => ({
@@ -52,5 +55,49 @@ describe("thread usage formatting", () => {
     expect(formatThreadCostUsd(12.345)).toBe("$12.35");
     expect(formatThreadCostUsd(0.0042)).toBe("$0.0042");
     expect(formatThreadCostUsd(0)).toBe("$0.00");
+  });
+});
+
+describe("subagent thread usage", () => {
+  const ownContext = snapshot({});
+
+  it("shows a subagent's own usage and nothing of any conversation usage", () => {
+    const usage = deriveThreadUsageSummary({
+      subagentUsage: {
+        context: {
+          usedTokens: 21_007,
+          maxTokens: 200_000,
+          inputTokens: 21_000,
+          outputTokens: 7,
+          updatedAt: "2026-10-15T00:00:00.000Z",
+        },
+        totalTokens: 23_500,
+        toolUses: 5,
+        durationMs: 63_000,
+      },
+      context: ownContext,
+      costUsd: 0.21,
+    });
+    expect(usage.costUsd).toBeNull();
+    expect(usage.context && formatThreadContextUsage(usage.context)).toBe("11% · 21k / 200k");
+    expect(usage.context && formatThreadTokenUsage(usage.context)).toBe("21k in · 7 out");
+    expect(usage.run && formatThreadRunUsage(usage.run)).toBe("5 tool uses · 24k tokens · 1m 3s");
+    expect(hasThreadUsage(usage)).toBe(true);
+  });
+
+  it("shows totals alone before the subagent's first response", () => {
+    const usage = deriveThreadUsageSummary({
+      subagentUsage: { toolUses: 1 },
+      context: null,
+      costUsd: null,
+    });
+    expect(usage.context).toBeNull();
+    expect(usage.run && formatThreadRunUsage(usage.run)).toBe("1 tool use");
+  });
+
+  it("keeps a thread's own usage when it has no subagent usage", () => {
+    expect(
+      deriveThreadUsageSummary({ subagentUsage: null, context: ownContext, costUsd: 0.21 }),
+    ).toEqual({ context: ownContext, costUsd: 0.21 });
   });
 });

@@ -466,6 +466,7 @@ import {
 } from "./chat/PanelLayoutControls";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel, type ThreadDetailsPanelProps } from "./chat/ThreadDetailsPanel";
+import { deriveThreadUsageSummary } from "./chat/ThreadUsageSection.logic";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   type EnvironmentOption,
@@ -11340,7 +11341,11 @@ export default function ChatView(props: ChatViewProps) {
     onAddProjectScript: saveProjectScript,
     onUpdateProjectScript: updateProjectScript,
     onDeleteProjectScript: deleteProjectScript,
-    usage: { context: activeContextWindow, costUsd: activeProviderThreadCostUsd },
+    usage: deriveThreadUsageSummary({
+      subagentUsage: serverThread?.subagentUsage,
+      context: activeContextWindow,
+      costUsd: activeProviderThreadCostUsd,
+    }),
   };
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,

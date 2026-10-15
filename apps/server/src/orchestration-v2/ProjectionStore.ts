@@ -56,6 +56,7 @@ import {
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2SubagentStatus as OrchestrationV2SubagentStatusSchema,
+  OrchestrationV2SubagentUsage as OrchestrationV2SubagentUsageSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
   RunId,
@@ -75,6 +76,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -971,6 +973,9 @@ type PayloadRow = {
 };
 
 const isSubagentStatus = Schema.is(OrchestrationV2SubagentStatusSchema);
+const decodeSubagentUsageJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(OrchestrationV2SubagentUsageSchema),
+);
 
 type ShellThreadRow = {
   readonly thread_id: string;
@@ -999,6 +1004,7 @@ type ShellThreadRow = {
   readonly item_count: number;
   readonly runless_item_count: number;
   readonly subagent_status: string | null;
+  readonly subagent_usage_json: string | null;
 };
 
 type ShellRunRow = {
@@ -1571,7 +1577,13 @@ function withChildSubagentStatus(
       }
     }
   }
-  return latest === null ? shell : { ...shell, subagentStatus: latest.status };
+  return latest === null
+    ? shell
+    : {
+        ...shell,
+        subagentStatus: latest.status,
+        ...(latest.usage === undefined ? {} : { subagentUsage: latest.usage }),
+      };
 }
 
 /**
@@ -1643,6 +1655,7 @@ type ShellThreadState = {
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly goal: OrchestrationV2ThreadShell["goal"];
   readonly subagentStatus: OrchestrationV2SubagentStatus | null;
+  readonly subagentUsage: OrchestrationV2ThreadShell["subagentUsage"];
   readonly itemCount: number;
   readonly runlessItemCount: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
@@ -1792,6 +1805,9 @@ function shellFromState(input: {
     activityRunStartedAt: input.state.activityRunStartedAt,
     status: input.state.latestRunStatus,
     ...(input.state.subagentStatus === null ? {} : { subagentStatus: input.state.subagentStatus }),
+    ...(input.state.subagentUsage === undefined
+      ? {}
+      : { subagentUsage: input.state.subagentUsage }),
     lastError: input.state.lastError,
     lastErrorClass: input.state.lastErrorClass,
     usageLimitResetAt: input.state.usageLimitResetAt,
@@ -5342,7 +5358,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE subagent.child_thread_id = t.thread_id
                 ORDER BY subagent.updated_at DESC, subagent.subagent_id DESC
                 LIMIT 1
-              ) AS subagent_status
+              ) AS subagent_status,
+              (
+                SELECT json_extract(subagent.payload_json, '$.usage')
+                FROM orchestration_v2_projection_subagents subagent
+                WHERE subagent.child_thread_id = t.thread_id
+                ORDER BY subagent.updated_at DESC, subagent.subagent_id DESC
+                LIMIT 1
+              ) AS subagent_usage_json
             FROM orchestration_v2_projection_threads t
             -- The newest run not waiting in a held queue, matching latestUnheldRun.
             LEFT JOIN orchestration_v2_projection_runs presented ON presented.run_id = (
@@ -5784,6 +5807,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             thread.activeProviderThreadId,
           ),
           subagentStatus: isSubagentStatus(row.subagent_status) ? row.subagent_status : null,
+          subagentUsage:
+            row.subagent_usage_json === null
+              ? undefined
+              : Option.getOrUndefined(decodeSubagentUsageJson(row.subagent_usage_json)),
           itemCount: row.item_count,
           runlessItemCount: row.runless_item_count,
           updatedAt: thread.updatedAt,

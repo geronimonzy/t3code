@@ -3,8 +3,6 @@ import {
   CommandId,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
-  isOrchestrationV2WorkActive,
-  type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2Run,
   type OrchestrationV2ProviderTurn,
@@ -409,69 +407,6 @@ export const layer: Layer.Layer<
     );
 
     /**
-     * A provider-native subagent's thread has no run to settle it. When its
-     * runless root turn ends, calls left open under it (one a previous provider
-     * process started, say) will never report, so they end with it, the way
-     * the adapter ends the calls it still tracks.
-     */
-    const endOpenSubagentCalls = Effect.fn("ProviderEventIngestor.endOpenSubagentCalls")(function* (
-      input: ProviderEventIngestInput,
-      root: OrchestrationV2ExecutionNode,
-    ) {
-      if (
-        root.kind !== "root_turn" ||
-        root.runId !== null ||
-        (root.status !== "completed" &&
-          root.status !== "failed" &&
-          root.status !== "cancelled" &&
-          root.status !== "interrupted")
-      ) {
-        return [];
-      }
-      const records = yield* projections
-        .getThreadRecords(root.threadId, ["nodes", "turnItems"], {
-          turnItemRunIds: [null],
-          turnItemStatuses: ["pending", "running", "waiting"],
-        })
-        .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
-      const calls = (records?.nodes ?? []).filter(
-        (node) =>
-          node.kind === "tool_call" &&
-          node.runId === null &&
-          node.rootNodeId === root.id &&
-          isOrchestrationV2WorkActive(node.status),
-      );
-      const status =
-        root.status === "cancelled" || root.status === "interrupted" ? "interrupted" : "failed";
-      const now = yield* DateTime.now;
-      const events: Array<OrchestrationV2DomainEvent> = [];
-      for (const node of calls) {
-        events.push(
-          yield* makeDomainEvent(input, {
-            type: "node.updated",
-            threadId: root.threadId,
-            nodeId: node.id,
-            runId: null,
-            payload: { ...node, status, completedAt: now },
-          }),
-        );
-        for (const item of records?.turnItems ?? []) {
-          if (item.nodeId !== node.id) continue;
-          events.push(
-            yield* makeDomainEvent(input, {
-              type: "turn-item.updated",
-              threadId: root.threadId,
-              nodeId: node.id,
-              runId: null,
-              payload: { ...item, status, completedAt: now, updatedAt: now },
-            }),
-          );
-        }
-      }
-      return events;
-    });
-
-    /**
      * A native subagent's thread starts on the parent's model when the
      * provider names the real one later (a Claude agent file's model arrives
      * with the subagent's first reply). Clients read the thread's model and
@@ -725,7 +660,6 @@ export const layer: Layer.Layer<
                 runId: input.event.node.runId,
                 nodeId: input.event.node.id,
               }),
-              ...(yield* endOpenSubagentCalls(input, input.event.node)),
             ];
           case "subagent.updated":
             return [

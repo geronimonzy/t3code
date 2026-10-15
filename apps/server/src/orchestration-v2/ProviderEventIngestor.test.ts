@@ -2145,8 +2145,10 @@ layer("ProviderEventIngestorV2", (it) => {
       });
       assert.equal(yield* fixture.subagentStatus, "completed");
       assert.equal(yield* fixture.childNodeStatus(childRootId), "completed");
-      assert.equal(yield* fixture.childNodeStatus(callId), "failed");
-      assert.equal(yield* fixture.childTurnItemStatus(callItemId), "failed");
+      // Some providers keep background tools running past the turn; startup
+      // recovery, not the root's completion, ends calls nobody reports on.
+      assert.equal(yield* fixture.childNodeStatus(callId), "running");
+      assert.equal(yield* fixture.childTurnItemStatus(callItemId), "running");
     }),
   );
 

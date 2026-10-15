@@ -2946,6 +2946,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // installed file topology. The optimization is in the payload shape, not
     // in trading update bandwidth for install speed.
     buildConfig.nsis = { differentialPackage: true };
+    // electron-builder has no per-platform protocols key for Windows. The top-level one makes the
+    // NSIS installer write the t3code:// registry entries and remove them on uninstall. Only the
+    // production scheme: dev builds register t3code-dev themselves at runtime.
+    buildConfig.protocols = [{ name: "T3 Code", schemes: ["t3code"] }];
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",

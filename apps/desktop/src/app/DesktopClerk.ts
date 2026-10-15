@@ -21,6 +21,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
+import { isOwnSchemeArgument } from "./DesktopWindowsProtocolClient.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
 
@@ -196,8 +197,13 @@ export const make = Effect.gen(function* () {
         void runPromise(webLinks.receive(value));
         return true;
       };
+      // Windows delivers the link in argv, on a cold start and in `second-instance`. Only this
+      // build's own scheme counts there, so a stray argument never reaches the link parser.
+      const ownScheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
+      const openArgvLink = (value: string) =>
+        isOwnSchemeArgument(value, ownScheme) && openAppLink(value);
       const args = yield* HostProcess.Arguments;
-      args.some((value) => startProviderAuthHandoff(value) || openAppLink(value));
+      args.some((value) => startProviderAuthHandoff(value) || openArgvLink(value));
       // As the default browser, macOS hands T3 Code every web link through the same event.
       const openWebLink = (url: string) => {
         if (!DesktopWebLinks.isWebLink(url)) return false;
@@ -223,7 +229,7 @@ export const make = Effect.gen(function* () {
         if (
           argv?.some(
             (value) =>
-              startProviderAuthHandoff(value) || resumeProviderAuth(value) || openAppLink(value),
+              startProviderAuthHandoff(value) || resumeProviderAuth(value) || openArgvLink(value),
           )
         )
           return;

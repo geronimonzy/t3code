@@ -2458,8 +2458,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const completedAt = isOrchestrationV2WorkActive(status)
               ? null
               : (prior.completedAt ?? input.completedAt ?? now);
+            // A reopened subagent is no longer the one restart recovery ended.
+            const { endedBy: _endedByRestart, ...priorFields } = prior;
             const task = {
-              ...prior,
+              ...(input.reopen ? priorFields : prior),
               status,
               ...(input.reopen
                 ? {

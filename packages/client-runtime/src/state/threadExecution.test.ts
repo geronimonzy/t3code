@@ -25,6 +25,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  presentPendingBackgroundWork,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
 
@@ -345,6 +346,20 @@ describe("deriveProviderSubagentStatus", () => {
   it("leaves T3 delegated tasks and ordinary threads alone", () => {
     expect(deriveProviderSubagentStatus(child("mcp"))).toBeNull();
     expect(deriveProviderSubagentStatus({ ...v2Projection, nodes: [root] })).toBeNull();
+  });
+});
+
+describe("presentPendingBackgroundWork", () => {
+  it("links a monitor to the tool call that started it", () => {
+    const toolCallItemId = TurnItemId.make("turn-item:monitor-call");
+    const presentation = presentPendingBackgroundWork([
+      { taskId: "watch", kind: "monitor", description: "Watch CI", toolCallItemId },
+      { taskId: "old", kind: "monitor", description: "Tail logs" },
+    ]);
+    expect(presentation?.items.map((item) => [item.label, item.toolCallItemId])).toEqual([
+      ["Watch CI", toolCallItemId],
+      ["Tail logs", undefined],
+    ]);
   });
 });
 

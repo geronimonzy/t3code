@@ -13,7 +13,8 @@ const DISMISS_TRANSITION_MS = 220;
 export interface ComposerBannerStackItem {
   readonly id: string;
   readonly variant: ComposerBannerVariant;
-  readonly priority?: "urgent" | "activity" | "notice";
+  /** "critical" takes the front slot ahead of activity; reserve it for connection loss. */
+  readonly priority?: "critical" | "urgent" | "activity" | "notice";
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
@@ -31,6 +32,9 @@ export type ComposerBannerStackContent = Pick<
 type ComposerBannerStackEntry = ComposerBannerStackItem | ComposerBannerStackContent;
 
 function bannerPriority(item: ComposerBannerStackEntry) {
+  if (item.priority === "critical") {
+    return -1;
+  }
   if (item.priority === "urgent" || item.variant === "error" || item.variant === "warning") {
     return 0;
   }
@@ -38,6 +42,11 @@ function bannerPriority(item: ComposerBannerStackEntry) {
     return 1;
   }
   return 2;
+}
+
+/** Front item first; the rest peek behind it in order. */
+export function orderComposerBanners<T extends ComposerBannerStackEntry>(items: ReadonlyArray<T>) {
+  return items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
 }
 
 interface ComposerBannerStackProps {
@@ -85,7 +94,7 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     }
   }, [stackExpanded]);
 
-  const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
+  const orderedItems = orderComposerBanners(items);
   const frontItem = orderedItems[0];
   if (!frontItem) {
     return (

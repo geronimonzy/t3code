@@ -81,6 +81,7 @@ interface ThreadLifecycleInput {
   readonly runtimeMode: RuntimeMode;
   readonly isWorking: boolean;
   readonly pendingBackgroundTasks: Parameters<typeof backgroundWorkBannerItem>[0]["tasks"];
+  readonly onRevealToolCall: (toolCallItemId: string) => void;
   readonly activePendingApproval: PendingThreadRequests["activePendingApproval"];
   readonly activePendingUserInput: PendingThreadRequests["activePendingUserInput"];
   readonly localCheckoutBranchMismatch: {
@@ -131,6 +132,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     runtimeMode,
     isWorking,
     pendingBackgroundTasks,
+    onRevealToolCall,
     activePendingApproval,
     activePendingUserInput,
     localCheckoutBranchMismatch,
@@ -533,6 +535,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         stopping: isStoppingBackgroundWork,
         onStop: handleStopBackgroundWorkStable,
         onOpenThread: onOpenRelatedThreadStable,
+        onRevealToolCall,
       })
     : null;
   // The relative times read the clock; nowMinute re-renders them on the minute.

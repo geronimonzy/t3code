@@ -260,6 +260,7 @@ import {
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
+import type { WorkEntryRevealRequest } from "./chat/useWorkEntryReveal";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import {
@@ -268,6 +269,7 @@ import {
   resolveScrollToEndClearance,
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { useIsCompactEmbed } from "../embedMode";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -279,6 +281,9 @@ import {
 } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
+import { deriveThreadUsageSummary } from "./chat/ThreadUsageSection.logic";
+import { ComposerSubagentStrip, useComposerSubagentStrip } from "./chat/ComposerSubagentStrip";
+import { useMascotsPreference } from "../mascot/mascotPreferences";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   resolveEffectiveEnvMode,
@@ -950,7 +955,10 @@ export default function ChatView(props: ChatViewProps) {
   );
   const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
   const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
-  const rightPanelOpen = rightPanelState.isOpen;
+  const compactEmbed = useIsCompactEmbed();
+  // Compact embed shows no side panels; treating them as closed also keeps a
+  // persisted maximized panel from collapsing the chat column.
+  const rightPanelOpen = rightPanelState.isOpen && !compactEmbed;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const rightPanelPresenceValue = {
@@ -1411,6 +1419,11 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadLiveTokenUsage,
     activeProviderThread,
   );
+  const threadUsage = deriveThreadUsageSummary({
+    subagentUsage: serverThread?.subagentUsage,
+    context: activeContextWindow,
+    costUsd: activeProviderThread?.costUsd ?? null,
+  });
   const pendingBackgroundTasks = deriveThreadPendingBackgroundTasks(serverProjection);
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
@@ -2420,6 +2433,10 @@ export default function ChatView(props: ChatViewProps) {
   });
   const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
   const nowMinute = useNowMinute();
+  // The background work banner names a monitor; its name jumps to the tool call that started it.
+  const [toolCallReveal, setToolCallReveal] = useState<WorkEntryRevealRequest | null>(null);
+  const revealToolCall = (entryId: string) =>
+    setToolCallReveal((previous) => ({ entryId, key: (previous?.key ?? 0) + 1 }));
   const {
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,
@@ -2453,6 +2470,7 @@ export default function ChatView(props: ChatViewProps) {
     runtimeMode,
     isWorking,
     pendingBackgroundTasks,
+    onRevealToolCall: revealToolCall,
     activePendingApproval,
     activePendingUserInput,
     localCheckoutBranchMismatch,
@@ -2587,6 +2605,21 @@ export default function ChatView(props: ChatViewProps) {
           },
         })
       : null;
+  const [subagentMascots] = useMascotsPreference();
+  const { strip: subagentStrip, dismiss: dismissSubagentChip } = useComposerSubagentStrip(
+    serverProjection,
+    `${environmentId}:${activeThreadId}`,
+  );
+  // Its own row under the banner stack: live progress must never hide behind a notice.
+  const subagentStripContent =
+    subagentStrip === null ? null : (
+      <ComposerSubagentStrip
+        strip={subagentStrip}
+        mascots={subagentMascots}
+        onOpenThread={onOpenRelatedThreadStable}
+        onDismiss={dismissSubagentChip}
+      />
+    );
   const composerBannerItems = (() => {
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const backgroundWorkItems = [childInputBanner, goalBanner, backgroundWorkBanner].filter(
@@ -3186,45 +3219,47 @@ export default function ChatView(props: ChatViewProps) {
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
         data-chat-column
       >
-        <header
-          ref={threadPanelPopoverAnchorRef}
-          data-chat-header
-          className={cn(
-            "relative bg-background [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
-            isElectron
-              ? cn(
-                  "drag-region flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
-                  reserveTitleBarControlInset &&
-                    !inlineRightPanelOwnsTitleBar &&
-                    "wco:pr-(--workspace-native-controls-inset)",
-                )
-              : "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center pl-(--workspace-gutter-start) pr-(--workspace-gutter-end)",
-            COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-          )}
-        >
-          {isElectron && rightPanelControlsAtRoot ? (
-            <span
-              aria-hidden
-              className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
+        {compactEmbed ? null : (
+          <header
+            ref={threadPanelPopoverAnchorRef}
+            data-chat-header
+            className={cn(
+              "relative bg-background [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
+              isElectron
+                ? cn(
+                    "drag-region flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
+                    reserveTitleBarControlInset &&
+                      !inlineRightPanelOwnsTitleBar &&
+                      "wco:pr-(--workspace-native-controls-inset)",
+                  )
+                : "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center pl-(--workspace-gutter-start) pr-(--workspace-gutter-end)",
+              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+            )}
+          >
+            {isElectron && rightPanelControlsAtRoot ? (
+              <span
+                aria-hidden
+                className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
+              />
+            ) : null}
+            {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
+            {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
+            <ChatHeader
+              activeThreadEnvironmentId={activeThread.environmentId}
+              activeThreadId={activeThread.id}
+              isServerThread={isServerThread}
+              activeThreadTitle={activeThread.title}
+              activeProject={activeProject ?? null}
+              parentThreadLink={parentThreadLink}
+              onOpenThread={onOpenRelatedThreadStable}
+              rightPanelOpen={inlineRightPanelOwnsTitleBar}
+              onNewThreadInProject={handleNewThreadInActiveProjectStable}
+              {...(activeDraftLogicalProjectKey
+                ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
+                : {})}
             />
-          ) : null}
-          {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
-          {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
-          <ChatHeader
-            activeThreadEnvironmentId={activeThread.environmentId}
-            activeThreadId={activeThread.id}
-            isServerThread={isServerThread}
-            activeThreadTitle={activeThread.title}
-            activeProject={activeProject ?? null}
-            parentThreadLink={parentThreadLink}
-            onOpenThread={onOpenRelatedThreadStable}
-            rightPanelOpen={inlineRightPanelOwnsTitleBar}
-            onNewThreadInProject={handleNewThreadInActiveProjectStable}
-            {...(activeDraftLogicalProjectKey
-              ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
-              : {})}
-          />
-        </header>
+          </header>
+        )}
 
         <div className="relative flex min-h-0 min-w-0 flex-1">
           <ThreadFindCanvas
@@ -3275,6 +3310,7 @@ export default function ChatView(props: ChatViewProps) {
                 readyMarkdownCwd={gitCwd}
                 readyWorkspaceRoot={activeWorkspaceRoot ?? null}
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
+                toolCallReveal={paintOnlyDisplayedTimeline ? null : toolCallReveal}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline
                   ? {
@@ -3576,6 +3612,7 @@ export default function ChatView(props: ChatViewProps) {
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                               queuedRunsControl={queuedRunsControl}
                               bannerItems={composerBannerItems}
+                              subagentStrip={subagentStripContent}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}
                               onToggleKeepFullHistory={toggleKeepFullHistoryStable}
@@ -3797,6 +3834,7 @@ export default function ChatView(props: ChatViewProps) {
               worktreePath={activeThread.worktreePath}
               isServerThread={isServerThread}
               {...(draftId ? { draftId } : {})}
+              usage={threadUsage}
               activeProjectName={activeProject?.title}
               activeProjectScripts={activeProject ? activeProjectScripts : undefined}
               preferredScriptId={

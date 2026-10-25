@@ -98,8 +98,10 @@ export function backgroundWorkBannerItem(input: {
   readonly stopping: boolean;
   readonly onStop: () => Promise<void>;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  /** Jumps to the tool call that started a monitor. */
+  readonly onRevealToolCall: (toolCallItemId: string) => void;
 }): ComposerBannerStackItem | null {
-  const { onOpenThread } = input;
+  const { onOpenThread, onRevealToolCall } = input;
   const presentation = presentPendingBackgroundWork(input.tasks);
   if (presentation === null) return null;
   return {
@@ -116,31 +118,46 @@ export function backgroundWorkBannerItem(input: {
       />
     ),
     title: presentation.title,
+    // A single named item is already in the title, unless it links somewhere.
     description:
-      presentation.items.length === 1 && presentation.items[0]?.childThreadId === undefined
+      presentation.items.length === 1 &&
+      presentation.items[0]?.childThreadId === undefined &&
+      presentation.items[0]?.toolCallItemId === undefined
         ? undefined
         : presentation.items.map((item, index) => {
-            const childThreadId = item.childThreadId;
+            const { childThreadId, toolCallItemId } = item;
+            const single = presentation.items.length === 1;
             const separator = index < presentation.items.length - 1 ? "," : null;
             return (
               <Fragment key={item.taskId}>
                 {index > 0 ? " " : null}
-                {childThreadId === undefined ? (
+                {childThreadId !== undefined ? (
+                  <span className="whitespace-nowrap">
+                    <InlineButton
+                      tone="muted"
+                      aria-label={`${single ? "Show" : "Open"} subagent ${item.label}`}
+                      onClick={() => onOpenThread(childThreadId)}
+                    >
+                      {single ? "Show" : item.label}
+                    </InlineButton>
+                    {separator}
+                  </span>
+                ) : toolCallItemId !== undefined ? (
+                  <span className="whitespace-nowrap">
+                    <InlineButton
+                      tone="muted"
+                      aria-label={`Show the tool call for monitor ${item.label}`}
+                      onClick={() => onRevealToolCall(toolCallItemId)}
+                    >
+                      {single ? "Show" : item.label}
+                    </InlineButton>
+                    {separator}
+                  </span>
+                ) : (
                   <>
                     {item.label}
                     {separator}
                   </>
-                ) : (
-                  <span className="whitespace-nowrap">
-                    <InlineButton
-                      tone="muted"
-                      aria-label={`${presentation.items.length === 1 ? "Show" : "Open"} subagent ${item.label}`}
-                      onClick={() => onOpenThread(childThreadId)}
-                    >
-                      {presentation.items.length === 1 ? "Show" : item.label}
-                    </InlineButton>
-                    {separator}
-                  </span>
                 )}
               </Fragment>
             );

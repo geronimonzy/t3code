@@ -72,6 +72,11 @@ import {
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
+import {
+  createWorkEntryRevealStore,
+  useWorkEntryReveal,
+  type WorkEntryRevealRequest,
+} from "./useWorkEntryReveal";
 import type { ThreadFindPositionReader } from "./threadFind";
 import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
@@ -177,6 +182,8 @@ export interface MessagesTimelineHistoryControls {
 interface MessagesTimelineProps {
   citationRequest?: AssistantCitationRequest | null;
   citationHistoryLoading?: boolean;
+  /** Scrolls to a tool call row and expands it, such as the one that started a monitor. */
+  toolCallReveal?: WorkEntryRevealRequest | null;
   onCiteAssistantText?: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -290,6 +297,7 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
 
 const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
+  toolCallReveal = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
   isWorking,
@@ -406,6 +414,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const expandCitedRun = (runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
   };
+  const [workEntryReveals] = useState(createWorkEntryRevealStore);
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
@@ -662,6 +671,33 @@ const ConversationTimeline = memo(function ConversationTimeline({
         })
       ).get(entryId),
     onExpandTurn: expandCitedRun,
+    onManualNavigation,
+  });
+  useWorkEntryReveal({
+    request: toolCallReveal,
+    entries: timelineEntries,
+    rows,
+    foldRunIds: () =>
+      timelineTurnFoldRunIdsByEntryId({
+        timelineEntries,
+        latestRun,
+        runningRunId,
+        isWorking,
+        runlessWorkActive,
+      }),
+    listRef,
+    store: workEntryReveals,
+    workGroupState: workGroupViewState,
+    animated: !prefersReducedMotion,
+    onExpandRun: expandCitedRun,
+    onExpandAttempt: (attemptId) =>
+      setExpandedAttemptIds((current) =>
+        current.has(attemptId) ? current : new Set(current).add(attemptId),
+      ),
+    onExpandGroup: (groupId) =>
+      setExpandedWorkGroupIds((current) =>
+        current.has(groupId) ? current : new Set(current).add(groupId),
+      ),
     onManualNavigation,
   });
   const [findListReady, setFindListReady] = useState(false);
@@ -942,6 +978,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
     onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
     workGroupViewState,
+    workEntryReveals,
   };
   const compactionAwaitingRow =
     isCompacting &&
@@ -1044,10 +1081,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
     <TimelineRowCtx value={sharedState}>
       <div className="messages-timeline-row-frame">
-        <div
-          className="@container/chat-lane chat-content-lane overflow-x-clip"
-          data-timeline-root="true"
-        >
+        <div className="@container/chat-lane chat-content-lane" data-timeline-root="true">
           <TimelineRowContent row={item} />
         </div>
       </div>

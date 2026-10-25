@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
+  commandPaletteWorktreeTargets,
   buildNestedSearchItems,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
@@ -863,5 +864,25 @@ describe("returning from file and content search", () => {
     expect(closed).toEqual({ open: false, mode: "files", openIntent: null });
     expect(reduceCommandPaletteUiState(closed, { _tag: "BackToCommand" })).toEqual(closed);
     expect(reduceCommandPaletteUiState(closed, { _tag: "SetOpen", open: true })).toEqual(root);
+  });
+});
+
+describe("commandPaletteWorktreeTargets", () => {
+  it("lists the project's other worktrees, those without a thread first", () => {
+    const targets = commandPaletteWorktreeTargets(
+      [
+        { name: "main", worktreePath: "/repo" },
+        { name: "feature", worktreePath: "/repo-feature" },
+        { name: "probe", worktreePath: "/repo/.claude/worktrees/probe" },
+        { name: "origin/feature", isRemote: true, worktreePath: null },
+        { name: "stale", worktreePath: null },
+      ],
+      "/repo",
+      new Set(["/repo-feature"]),
+    );
+    expect(targets).toEqual([
+      { branch: "probe", worktreePath: "/repo/.claude/worktrees/probe", hasThread: false },
+      { branch: "feature", worktreePath: "/repo-feature", hasThread: true },
+    ]);
   });
 });

@@ -1,4 +1,5 @@
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
+import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
@@ -27,6 +28,7 @@ function ScrollArea({
   scrollbarGutter = false,
   hideScrollbars = false,
   chainVerticalScroll = false,
+  overflowHintX = false,
   radius = "inherit",
   viewportTabIndex,
   ...props
@@ -36,13 +38,15 @@ function ScrollArea({
   scrollbarGutter?: boolean;
   hideScrollbars?: boolean;
   chainVerticalScroll?: boolean;
+  /** Fades and chevrons a side that hides more content, so a clipped edge doesn't read as the end. */
+  overflowHintX?: boolean;
   radius?: "inherit" | "none";
   viewportTabIndex?: number;
 }) {
   return (
     <ScrollAreaPrimitive.Root
       className={cn(
-        "relative size-full min-h-0 overflow-hidden",
+        "group/scroll-area relative size-full min-h-0 overflow-hidden",
         radius === "none" ? "rounded-none" : "rounded-[inherit]",
         className,
       )}
@@ -65,6 +69,22 @@ function ScrollArea({
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
+      {overflowHintX && (
+        <>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 left-0 flex w-10 items-center justify-start bg-linear-to-r from-background to-transparent text-muted-foreground opacity-0 transition-opacity group-data-overflow-x-start/scroll-area:opacity-100"
+          >
+            <ChevronLeftIcon className="size-4" />
+          </div>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 right-0 flex w-10 items-center justify-end bg-linear-to-l from-background to-transparent text-muted-foreground opacity-0 transition-opacity group-data-overflow-x-end/scroll-area:opacity-100"
+          >
+            <ChevronRightIcon className="size-4" />
+          </div>
+        </>
+      )}
       {!hideScrollbars && (
         <>
           <ScrollBar orientation="vertical" />

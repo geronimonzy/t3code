@@ -12,6 +12,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
+import { syncEmbedModeFromSearch, useIsCompactEmbed } from "../embedMode";
 import {
   releaseThreadUndoShortcut,
   threadUndoClaimsShortcut,
@@ -329,6 +330,11 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     usePanelAnimationSettings();
   useThreadVisitedMigration();
   const pathname = useLocation({ select: (location) => location.pathname });
+  const searchStr = useLocation({ select: (location) => location.searchStr });
+  const compactEmbed = useIsCompactEmbed();
+  useEffect(() => {
+    syncEmbedModeFromSearch(searchStr);
+  }, [searchStr]);
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const appModalOpen = isAppModalPage(pathname);
@@ -390,34 +396,38 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         defaultOpen
         style={sidebarProviderStyle}
       >
-        <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
-        <Sidebar
-          side="left"
-          collapsible="offcanvas"
-          data-app-sidebar=""
-          role="navigation"
-          aria-label="Threads"
-          resizable={{
-            maxWidth: sidebarMaximumWidth,
-            minWidth: sidebarMinimumWidth,
-            shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-              nextWidth <= currentWidth ||
-              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-            storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-            onResize: setSidebarWidth,
-          }}
-          style={windowControlsInsetStyle}
-        >
-          {legacySidebarEnabled ? (
-            <LegacyThreadSidebar routeReveal={sidebarRouteReveal} />
-          ) : (
-            <ThreadSidebar routeReveal={sidebarRouteReveal} />
-          )}
-          <SidebarRail onDoubleClick={resetSidebarWidth} />
-        </Sidebar>
+        {compactEmbed ? null : (
+          <>
+            <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
+            <Sidebar
+              side="left"
+              collapsible="offcanvas"
+              data-app-sidebar=""
+              role="navigation"
+              aria-label="Threads"
+              resizable={{
+                maxWidth: sidebarMaximumWidth,
+                minWidth: sidebarMinimumWidth,
+                shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+                  nextWidth <= currentWidth ||
+                  wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+                storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+                onResize: setSidebarWidth,
+              }}
+              style={windowControlsInsetStyle}
+            >
+              {legacySidebarEnabled ? (
+                <LegacyThreadSidebar routeReveal={sidebarRouteReveal} />
+              ) : (
+                <ThreadSidebar routeReveal={sidebarRouteReveal} />
+              )}
+              <SidebarRail onDoubleClick={resetSidebarWidth} />
+            </Sidebar>
+          </>
+        )}
         {children}
         <BackgroundThreadAnnouncer />
-        <SidebarControl />
+        {compactEmbed ? null : <SidebarControl />}
         <NavigationHistoryShortcuts />
         {appModalOpen ? null : <ThreadUndoShortcut />}
         <MainAppLocationTracker />

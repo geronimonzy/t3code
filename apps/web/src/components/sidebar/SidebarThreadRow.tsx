@@ -84,6 +84,8 @@ import {
   resolveWorkingStartedAt,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
+  sidebarThreadMascotState,
+  type SidebarSubagentRow,
 } from "../Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
@@ -111,6 +113,9 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } f
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
+import { SidebarSubagentRows } from "../SidebarSubagentRows";
+import { Mascot } from "../../mascot/Mascot";
+import { mascotCharacterForDriver } from "../../mascot/mascotAnimations";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -510,6 +515,10 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
+  /** Live subagents nested under this row. */
+  subagentRows: ReadonlyArray<SidebarSubagentRow>;
+  /** Pixel mascots for this row's status and its subagents. */
+  subagentMascots: boolean;
   variant: "card" | "slim";
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -706,6 +715,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         }
                       : null;
   const isWokeStatus = topStatus?.icon === "woke";
+  const threadMascotState = sidebarThreadMascotState(status, topStatus?.icon ?? null);
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
@@ -717,6 +727,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const modelInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
+  const mascotCharacterFor = (instanceId: string) =>
+    mascotCharacterForDriver(props.providerEntryByInstanceId.get(instanceId)?.driverKind);
   const showInstanceBadge =
     providerEntry !== null &&
     shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId.values());
@@ -1233,6 +1245,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
+        <SidebarSubagentRows
+          rows={props.subagentRows}
+          mascots={props.subagentMascots}
+          mascotCharacterFor={mascotCharacterFor}
+          onActivate={onThreadActivate}
+        />
       </li>
     );
   }
@@ -1336,7 +1354,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             topStatus.className,
                           )}
                         >
-                          {topStatus.icon === "working" ? (
+                          {props.subagentMascots && threadMascotState !== null ? (
+                            <Mascot
+                              state={threadMascotState}
+                              character={mascotCharacterForDriver(providerEntry?.driverKind)}
+                              className="h-4"
+                            />
+                          ) : topStatus.icon === "working" ? (
                             <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
                           ) : topStatus.icon === "waiting" ? (
                             <CircleDotDashedIcon aria-hidden className="size-4 shrink-0" />
@@ -1495,6 +1519,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
+      <SidebarSubagentRows
+        rows={props.subagentRows}
+        mascots={props.subagentMascots}
+        mascotCharacterFor={mascotCharacterFor}
+        onActivate={onThreadActivate}
+      />
     </li>
   );
 });

@@ -403,6 +403,8 @@ export interface ChatComposerProps {
   isPreparingWorktree: boolean;
   isCompacting: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
+  /** Live subagent activity, shown as its own row so no notice can cover it. */
+  subagentStrip?: ReactNode;
   resumeCompactionTokens: number | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
@@ -3485,6 +3487,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             items={bannerStackItems}
             attachedAbove={props.queuedRunsControl}
           />
+          {props.subagentStrip ? (
+            <ComposerBanner.Attachment>
+              <ComposerBanner.Root density="comfortable" data-chat-composer-subagent-strip="true">
+                {props.subagentStrip}
+              </ComposerBanner.Root>
+            </ComposerBanner.Attachment>
+          ) : null}
           {!activityStackItem && (shownSyncPhase || inlineTasksBadge) ? (
             <ComposerBanner.Attachment>
               <ComposerBanner.Root data-chat-composer-activity-strip="true">

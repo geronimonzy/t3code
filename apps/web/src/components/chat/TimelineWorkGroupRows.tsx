@@ -56,6 +56,7 @@ import {
   workEntryIconName,
 } from "./TimelineWorkEntryRow.logic";
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
+import { useWorkEntryRevealKey } from "./useWorkEntryReveal";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
@@ -143,7 +144,11 @@ function ExpandedWorkGroupEntries({
   entries: TimelineWorkEntry[];
   workspaceRoot: string | undefined;
 }) {
-  const { workGroupViewState: viewState, onToggleWorkEntry } = use(TimelineRowCtx);
+  const {
+    workGroupViewState: viewState,
+    onToggleWorkEntry,
+    workEntryReveals,
+  } = use(TimelineRowCtx);
   const [initialScrollIndex] = useState(() =>
     resolveWorkGroupScrollIndex(entries, viewState.scrollPositions.get(anchorKey)),
   );
@@ -238,6 +243,20 @@ function ExpandedWorkGroupEntries({
   };
 
   useLayoutEffect(updateExpandedContentHeight, [entries, updateExpandedContentHeight]);
+
+  // A reveal that lands while the group is open scrolls its list to the entry;
+  // one that opened the group already mounted it there.
+  const revealKey = useWorkEntryRevealKey(workEntryReveals, (entryId) =>
+    entries.some((entry) => entry.id === entryId),
+  );
+  const seenRevealKeyRef = useRef(revealKey);
+  useEffect(() => {
+    if (revealKey === null || revealKey === seenRevealKeyRef.current) return;
+    seenRevealKeyRef.current = revealKey;
+    const entryId = workEntryReveals.get()?.entryId;
+    const index = entries.findIndex((entry) => entry.id === entryId);
+    if (index >= 0) void listRef.current?.scrollToIndex({ index, animated: false });
+  }, [entries, revealKey, workEntryReveals]);
 
   return (
     <WorkGroupViewCtx value={groupView}>

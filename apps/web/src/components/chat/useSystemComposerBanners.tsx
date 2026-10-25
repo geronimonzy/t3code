@@ -213,6 +213,8 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
+        // Connection state outranks every other notice and activity.
+        priority: "critical",
         icon: <WifiOffIcon />,
         title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
         description: activeEnvironment ? (

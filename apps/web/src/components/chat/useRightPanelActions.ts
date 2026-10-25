@@ -3,6 +3,7 @@ import type { Dispatch } from "react";
 import type { ThreadPreviewState } from "../../previewStateStore";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { isAbsolutePath } from "@t3tools/shared/path";
 import { resolveExplicitDiffOpenOnActivate } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type ScopedThreadRef, type RunId } from "@t3tools/contracts";
@@ -155,7 +156,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   };
   const addDeviceSurfaceStable = useStableCallback(addDeviceSurface);
   const openFileSurface = (relativePath: string) => {
-    if (!activeThreadRef || !activeProject) return;
+    // Host paths open without a project; workspace paths need one.
+    if (!activeThreadRef || (!activeProject && !isAbsolutePath(relativePath))) return;
     useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
   };
   const openFileSurfaceStable = useStableCallback(openFileSurface);

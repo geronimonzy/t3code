@@ -23,6 +23,7 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLegacyLocalStorage from "./DesktopLegacyLocalStorage.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
+import { resolveWindowsProtocolClient } from "./DesktopWindowsProtocolClient.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
@@ -72,8 +73,11 @@ export class DesktopDevelopmentBackendPortRequiredError extends Schema.TaggedErr
 const { logInfo: logBootstrapInfo, logWarning: logBootstrapWarning } =
   DesktopObservability.makeComponentLogger("desktop-bootstrap");
 
-const { logInfo: logStartupInfo, logError: logStartupError } =
-  DesktopObservability.makeComponentLogger("desktop-startup");
+const {
+  logInfo: logStartupInfo,
+  logError: logStartupError,
+  logWarning: logStartupWarning,
+} = DesktopObservability.makeComponentLogger("desktop-startup");
 
 const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(function* (
   configuredPort: Option.Option<number>,
@@ -339,6 +343,27 @@ const startup = Effect.gen(function* () {
   yield* DesktopStartupRecovery.listen;
   // Portal identity is prepared pre-ready; MIME helpers must not gate the backend or window.
   yield* linuxUrlHandler.register.pipe(Effect.forkScoped);
+  // Windows: point the build's own scheme at this executable. Failure only costs the OS handoff.
+  const windowsProtocolClient = resolveWindowsProtocolClient({
+    platform: environment.platform,
+    isPackaged: environment.isPackaged,
+    scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+    execPath: process.execPath,
+    appPath: environment.appPath,
+  });
+  if (windowsProtocolClient !== null) {
+    const registered = yield* electronApp.setAsDefaultProtocolClient(
+      windowsProtocolClient.scheme,
+      windowsProtocolClient.path,
+      windowsProtocolClient.args,
+    );
+    const annotations = { scheme: windowsProtocolClient.scheme };
+    if (registered) {
+      yield* logStartupInfo("registered URL scheme handler", annotations);
+    } else {
+      yield* logStartupWarning("URL scheme handler registration failed", annotations);
+    }
+  }
   yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
 }).pipe(Effect.withSpan("desktop.startup"));
 

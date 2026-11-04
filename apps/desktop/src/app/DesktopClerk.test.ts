@@ -483,3 +483,61 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
     );
   }).pipe(Effect.scoped),
 );
+
+it.effect("opens own-scheme links from argv on a cold start and in second-instance", () =>
+  Effect.gen(function* () {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const electronApp = {
+      setPath: () => Effect.void,
+      whenReady: Effect.void,
+      on: (name: string, listener: (...args: unknown[]) => void) =>
+        Effect.sync(() => {
+          listeners.set(name, listener);
+        }),
+    } as unknown as ElectronApp.ElectronApp["Service"];
+    const received: Array<string> = [];
+    yield* Effect.gen(function* () {
+      const clerk = yield* DesktopClerk.DesktopClerk;
+      yield* clerk.configure;
+      yield* Effect.yieldNow;
+      // The dev build's scheme, app-internal URLs and flags are ignored.
+      listeners.get("second-instance")!({}, [
+        "T3 Code.exe",
+        "t3code-dev://new?prompt=dev",
+        "t3code://app/welcome",
+        "--flag",
+      ]);
+      yield* Effect.yieldNow;
+      assert.deepStrictEqual(received, ["t3code://new?prompt=cold"]);
+      listeners.get("second-instance")!({}, [
+        "T3 Code.exe",
+        "t3code://threads/env-1/thread-1?prompt=hi",
+      ]);
+      yield* Effect.yieldNow;
+      assert.deepStrictEqual(received, [
+        "t3code://new?prompt=cold",
+        "t3code://threads/env-1/thread-1?prompt=hi",
+      ]);
+    }).pipe(
+      Effect.provide(layerDesktopClerk(false, [], "win32", undefined, undefined, listeners)),
+      Effect.provideService(HostProcess.Arguments, [
+        "T3 Code.exe",
+        "--flag",
+        "t3code://new?prompt=cold",
+      ]),
+      Effect.provideService(ElectronApp.ElectronApp, electronApp),
+      Effect.provideService(ElectronWindow.ElectronWindow, {
+        currentMainOrFirst: Effect.succeedNone,
+      } as unknown as ElectronWindow.ElectronWindow["Service"]),
+      Effect.provideService(
+        DesktopWebLinks.DesktopWebLinks,
+        DesktopWebLinks.DesktopWebLinks.of({
+          receive: (url) => Effect.sync(() => void received.push(url)),
+          setRendererReady: () => Effect.void,
+        }),
+      ),
+    );
+  }).pipe(Effect.scoped),
+);

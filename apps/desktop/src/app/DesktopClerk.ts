@@ -23,6 +23,7 @@ import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
+import { isOwnSchemeArgument } from "./DesktopWindowsProtocolClient.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
 
@@ -215,8 +216,14 @@ export const make = Effect.gen(function* () {
         void runPromise(webLinks.receive(value));
         return true;
       };
+      // Windows delivers links in argv (cold start and `second-instance`) for the scheme this
+      // build registered, so only that scheme counts there.
+      const ownScheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
+      const openArgvLink = (value: string) =>
+        (environment.platform !== "win32" || isOwnSchemeArgument(value, ownScheme)) &&
+        openAppLink(value);
       const args = yield* HostProcess.Arguments;
-      args.some((value) => startProviderAuthHandoff(value) || openAppLink(value));
+      args.some((value) => startProviderAuthHandoff(value) || openArgvLink(value));
       const openWebLink = (url: string) => {
         if (!DesktopWebLinks.isWebLink(url)) return false;
         void runPromise(webLinks.receive(url));
@@ -237,7 +244,7 @@ export const make = Effect.gen(function* () {
         if (
           argv?.some(
             (value) =>
-              startProviderAuthHandoff(value) || resumeProviderAuth(value) || openAppLink(value),
+              startProviderAuthHandoff(value) || resumeProviderAuth(value) || openArgvLink(value),
           )
         )
           return;

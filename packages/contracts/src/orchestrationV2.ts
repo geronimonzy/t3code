@@ -798,6 +798,18 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
 });
 export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.Type;
 
+export const OrchestrationV2SubagentStatus = Schema.Literals([
+  "idle",
+  "pending",
+  "running",
+  "waiting",
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+export type OrchestrationV2SubagentStatus = typeof OrchestrationV2SubagentStatus.Type;
+
 /** Append-only: phases discovered at runtime join when they start. */
 export const OrchestrationV2WorkflowPhase = Schema.Struct({
   index: NonNegativeInt,
@@ -881,6 +893,18 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
 });
 export type OrchestrationV2RemoteTaskChild = typeof OrchestrationV2RemoteTaskChild.Type;
 
+/**
+ * A provider-native subagent's own usage, for subagents with no provider turns of their own
+ * (Claude). `context` is its latest API response; the totals cover its current run.
+ */
+export const OrchestrationV2SubagentUsage = Schema.Struct({
+  context: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
+  totalTokens: Schema.optional(NonNegativeInt),
+  toolUses: Schema.optional(NonNegativeInt),
+  durationMs: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationV2SubagentUsage = typeof OrchestrationV2SubagentUsage.Type;
+
 export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
@@ -900,17 +924,20 @@ export const OrchestrationV2Subagent = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
-  status: Schema.Literals([
-    "idle",
-    "pending",
-    "running",
-    "waiting",
-    "completed",
-    "failed",
-    "cancelled",
-    "interrupted",
-  ]),
+  status: OrchestrationV2SubagentStatus,
   progress: Schema.optional(Schema.String),
+  usage: Schema.optional(OrchestrationV2SubagentUsage),
+  /** Set when restart recovery ended a still-running native subagent; cleared when it runs again. */
+  endedBy: Schema.optional(Schema.Literal("restart")),
+  /** Its own git worktree when not the parent's checkout; null once that worktree is removed. */
+  worktree: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        path: TrimmedNonEmptyString,
+        branch: Schema.NullOr(TrimmedNonEmptyString),
+      }),
+    ),
+  ),
   workflow: Schema.optional(OrchestrationV2SubagentWorkflow),
   result: Schema.NullOr(Schema.String),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1024,7 +1051,12 @@ export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
       childThreadId: Schema.optional(ThreadId),
     }),
     Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("command") }),
-    Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("monitor") }),
+    Schema.Struct({
+      ...PendingBackgroundTaskFields,
+      kind: Schema.Literal("monitor"),
+      /** The turn item of the tool call that started the monitor, when known. */
+      toolCallItemId: Schema.optional(TurnItemId),
+    }),
     Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("background_task") }),
   ],
   (kind) => Schema.Struct({ ...PendingBackgroundTaskFields, kind }),
@@ -1103,6 +1135,12 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   goal: Schema.optional(Schema.NullOr(OrchestrationV2ProviderGoal)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Running estimated cost of this provider thread in USD, as the provider
+   * reports it. API-equivalent pricing, not a billing statement; absent when
+   * the provider reports no cost.
+   */
+  costUsd: Schema.optional(Schema.Number.check(Schema.isFinite())),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
 });
@@ -2101,6 +2139,14 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   ),
   blockedOnThreadWait: Schema.optional(Schema.Boolean),
   status: OrchestrationV2ShellThreadStatus,
+  /**
+   * Set only on a subagent's child thread: mirrors the status of the parent
+   * thread's subagent record, since the child itself has no runs. Omitted on
+   * other threads and by servers that predate it.
+   */
+  subagentStatus: Schema.optional(OrchestrationV2SubagentStatus),
+  /** That record's usage, when its provider reports one. */
+  subagentUsage: Schema.optional(OrchestrationV2SubagentUsage),
   lastError: Schema.optional(Schema.NullOr(Schema.String)),
   lastErrorClass: Schema.optional(Schema.NullOr(OrchestrationV2ProviderFailureClass)),
   lastErrorCode: Schema.optional(Schema.NullOr(Schema.String)),

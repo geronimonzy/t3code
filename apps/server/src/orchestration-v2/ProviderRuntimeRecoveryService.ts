@@ -648,6 +648,7 @@ export const make = Effect.gen(function* () {
             projection,
             subagentId: subagent.id,
             status: "cancelled",
+            endedBy: "restart",
             now,
             emitted: events,
             allocateEventId,

@@ -19,6 +19,7 @@ import {
   orchestrationV2RunWorkStartedAt,
   type RunId,
   type ThreadId,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
@@ -365,6 +366,8 @@ export interface PendingBackgroundWorkItem {
   readonly kind: BackgroundWorkKind;
   readonly label: string;
   readonly childThreadId: ThreadId | undefined;
+  /** The tool call that started a monitor, when the provider linked it. */
+  readonly toolCallItemId: TurnItemId | undefined;
 }
 
 export interface PendingBackgroundWorkPresentation {
@@ -422,6 +425,7 @@ export function presentPendingBackgroundWork(
             ? BACKGROUND_WORK_KINDS[task.kind].singular
             : label,
         childThreadId: task.kind === "subagent" ? task.childThreadId : undefined,
+        toolCallItemId: task.kind === "monitor" ? task.toolCallItemId : undefined,
       };
     })
     // `map` returned a new array; Hermes has no `toSorted`.

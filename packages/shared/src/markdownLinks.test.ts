@@ -29,6 +29,10 @@ describe("inlineCodeFilePathCandidate", () => {
     ["share/man/ls.1", "share/man/ls.1"],
     ["src/main.ts/", null],
     ["./patches/", "./patches/"],
+    [".claude/worktrees/", ".claude/worktrees/"],
+    ["apps/web/src/", "apps/web/src/"],
+    ["apps/web/src", null],
+    ["~/", "~/"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });

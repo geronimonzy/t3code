@@ -902,6 +902,16 @@ it.effect("cancels workflow members and child roots without run ids after restar
         [childThreadId, "node.updated", "cancelled"],
       ],
     );
+    // Clients keep a restart-cut subagent visible; a deliberate stop carries no marker.
+    const subagentEvent = committed
+      .flatMap((command) => command.events)
+      .find((event) => event.type === "subagent.updated");
+    assert.equal(
+      subagentEvent !== undefined && "endedBy" in subagentEvent.payload
+        ? subagentEvent.payload.endedBy
+        : undefined,
+      "restart",
+    );
   }).pipe(Effect.provide(layer));
 });
 

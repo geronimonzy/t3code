@@ -296,6 +296,8 @@ export const endOrphanedNativeSubagent = Effect.fn("subagentProjection.endOrphan
     readonly status: "completed" | "failed" | "interrupted" | "cancelled";
     readonly completedAt?: DateTime.Utc;
     readonly result?: string | null;
+    /** Marks the record as cut off by a restart rather than stopped on purpose. */
+    readonly endedBy?: "restart";
     readonly now: DateTime.Utc;
     readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly allocateEventId: () => Effect.Effect<EventId, E>;
@@ -327,6 +329,7 @@ export const endOrphanedNativeSubagent = Effect.fn("subagentProjection.endOrphan
         payload: {
           ...subagent,
           status,
+          ...(input.endedBy === undefined ? {} : { endedBy: input.endedBy }),
           completedAt,
           updatedAt: now,
           ...(input.result === undefined ? {} : { result: input.result }),

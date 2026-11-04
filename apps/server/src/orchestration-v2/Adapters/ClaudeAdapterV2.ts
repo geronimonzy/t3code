@@ -45,6 +45,7 @@ import {
   type HookCallback,
   query,
   resolveSettings as resolveClaudeSettings,
+  type HookInput,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
   type PermissionResult,
@@ -100,6 +101,7 @@ import {
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2UserInputQuestion,
   type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentUsage,
   type OrchestrationV2AppThread,
   type OrchestrationV2SubagentWorkflow,
   type OrchestrationV2WorkflowRunHandles,
@@ -116,6 +118,7 @@ import {
   type RunId,
   type ThreadId,
   resolveIdleCompaction,
+  type TurnItemId,
 } from "@t3tools/contracts";
 
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
@@ -318,6 +321,58 @@ function mergeClaudeStreamUsage(
     output_tokens: delta.output_tokens,
   };
 }
+function claudeTaskUsageCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : undefined;
+}
+
+/** A subagent's running totals from its task_progress or task_notification. */
+function claudeSubagentTaskUsage(
+  message: SDKMessage,
+): Omit<OrchestrationV2SubagentUsage, "context"> | undefined {
+  const usage = field(message, "usage");
+  if (typeof usage !== "object" || usage === null) return undefined;
+  const totalTokens = claudeTaskUsageCount(Reflect.get(usage, "total_tokens"));
+  const toolUses = claudeTaskUsageCount(Reflect.get(usage, "tool_uses"));
+  const durationMs = claudeTaskUsageCount(Reflect.get(usage, "duration_ms"));
+  if (totalTokens === undefined && toolUses === undefined && durationMs === undefined) {
+    return undefined;
+  }
+  return {
+    ...(totalTokens === undefined ? {} : { totalTokens }),
+    ...(toolUses === undefined ? {} : { toolUses }),
+    ...(durationMs === undefined ? {} : { durationMs }),
+  };
+}
+
+/**
+ * Whether an update would change what the subagent's Usage shows. Duration
+ * alone does not count: it moves on every frame and rides along with the next
+ * real change.
+ */
+function claudeSubagentUsageChanged(
+  previous: OrchestrationV2SubagentUsage | undefined,
+  next: OrchestrationV2SubagentUsage,
+): boolean {
+  if (next.context !== undefined) {
+    const before = previous?.context;
+    if (
+      before === undefined ||
+      before.usedTokens !== next.context.usedTokens ||
+      before.inputTokens !== next.context.inputTokens ||
+      before.outputTokens !== next.context.outputTokens ||
+      before.maxTokens !== next.context.maxTokens
+    ) {
+      return true;
+    }
+  }
+  return (
+    (next.totalTokens !== undefined && next.totalTokens !== previous?.totalTokens) ||
+    (next.toolUses !== undefined && next.toolUses !== previous?.toolUses)
+  );
+}
+
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
@@ -1537,6 +1592,7 @@ export function makeClaudeQueryOptions(input: {
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly permissionMode?: PermissionMode;
   readonly canUseTool?: CanUseTool;
+  readonly hooks?: ClaudeQueryOptions["hooks"];
   readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
   readonly onElicitation?: ClaudeQueryOptions["onElicitation"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
@@ -1621,6 +1677,7 @@ export function makeClaudeQueryOptions(input: {
     ...(input.allowedTools === undefined ? {} : { allowedTools: [...input.allowedTools] }),
     ...(input.disallowedTools === undefined ? {} : { disallowedTools: [...input.disallowedTools] }),
     ...(input.canUseTool === undefined ? {} : { canUseTool: input.canUseTool }),
+    ...(input.hooks === undefined ? {} : { hooks: input.hooks }),
     ...(input.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
       : {}),
@@ -2955,24 +3012,30 @@ function claudePendingBackgroundTask(input: {
   readonly taskId: string;
   readonly taskType: string | null;
   // Only the launching Monitor tool distinguishes a local_bash Monitor from background Bash.
-  readonly startedByMonitor: boolean;
+  // The call's turn item lets clients jump to it.
+  readonly monitorToolCallItemId: TurnItemId | undefined;
   readonly description: string | undefined;
   // Undeclared SDK field: the subagent whose own background work this is.
   readonly parentTaskId: unknown;
 }): OrchestrationV2PendingBackgroundTask {
-  return {
+  const shared = {
     taskId: input.taskId,
-    kind: input.startedByMonitor
-      ? "monitor"
-      : ((input.taskType === null
-          ? undefined
-          : CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS.get(input.taskType)) ?? "background_task"),
     ...(input.description !== undefined && input.description.trim().length > 0
       ? { description: input.description }
       : {}),
     ...(typeof input.parentTaskId === "string" && input.parentTaskId.trim().length > 0
       ? { parentTaskId: input.parentTaskId }
       : {}),
+  };
+  if (input.monitorToolCallItemId !== undefined) {
+    return { ...shared, kind: "monitor", toolCallItemId: input.monitorToolCallItemId };
+  }
+  return {
+    ...shared,
+    kind:
+      (input.taskType === null
+        ? undefined
+        : CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS.get(input.taskType)) ?? "background_task",
   };
 }
 
@@ -3015,7 +3078,7 @@ function claudePendingBackgroundTasksFromRoster(
 
 function parseClaudeBackgroundTaskEntry(
   entry: unknown,
-  monitorTasks: ReadonlyMap<string, unknown>,
+  monitorToolCallItemId: (taskId: string) => TurnItemId | undefined,
 ): OrchestrationV2PendingBackgroundTask | null {
   if (entry === null || typeof entry !== "object") {
     return null;
@@ -3033,7 +3096,7 @@ function parseClaudeBackgroundTaskEntry(
   return claudePendingBackgroundTask({
     taskId,
     taskType,
-    startedByMonitor: monitorTasks.has(taskId),
+    monitorToolCallItemId: monitorToolCallItemId(taskId),
     description: typeof description === "string" ? description : undefined,
     parentTaskId: Reflect.get(entry, "parent_task_id"),
   });
@@ -4249,6 +4312,8 @@ function isClaudeTranscriptConversationLine(
 
 interface PendingClaudeSubagentLaunch {
   readonly model?: string;
+  // Context from a reply that arrived before task_started registered it.
+  readonly usage?: OrchestrationV2SubagentUsage;
   readonly effort?: string;
   readonly ownerToolUseId?: string;
 }
@@ -4594,6 +4659,88 @@ function claudeProposedPlan(input: unknown): string | null {
   return typeof plan === "string" && plan.trim().length > 0 ? plan.trim() : null;
 }
 
+/**
+ * The folder Claude moved its session to, if the hook reports a move: a
+ * shell `cd` fires CwdChanged, while EnterWorktree and ExitWorktree change
+ * the session's folder without it and name the new one in their result.
+ */
+function claudeMovedSessionCwd(hookInput: HookInput): string | null {
+  if (hookInput.hook_event_name === "CwdChanged") return hookInput.new_cwd;
+  if (hookInput.hook_event_name !== "PostToolUse") return null;
+  const response = hookInput.tool_response;
+  if (typeof response !== "object" || response === null) return null;
+  const folder =
+    hookInput.tool_name === "EnterWorktree"
+      ? (response as { worktreePath?: unknown }).worktreePath
+      : hookInput.tool_name === "ExitWorktree"
+        ? (response as { originalCwd?: unknown }).originalCwd
+        : undefined;
+  return typeof folder === "string" && folder.length > 0 ? folder : null;
+}
+
+/**
+ * The git checkout holding a folder: top folder, common git dir (shared by a
+ * main checkout and its linked worktrees), whether it is linked, and branch
+ * (null when detached). Null outside a repository. Reads files only, so a hook can run it.
+ */
+const resolveGitCheckout = Effect.fnUntraced(function* (folder: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  let directory = path.resolve(folder);
+  for (;;) {
+    const dotGit = path.join(directory, ".git");
+    const info = yield* fileSystem.stat(dotGit).pipe(Effect.option);
+    if (Option.isSome(info)) {
+      let gitDir = dotGit;
+      let commonDir = dotGit;
+      if (info.value.type === "File") {
+        // A linked worktree (or a submodule) points at its own git dir; a
+        // worktree's git dir names the main repository's in `commondir`.
+        const pointer = yield* fileSystem.readFileString(dotGit).pipe(Effect.option);
+        const target = Option.isSome(pointer)
+          ? /^gitdir:\s*(.+?)\s*$/m.exec(pointer.value)?.[1]
+          : undefined;
+        if (target === undefined) return null;
+        gitDir = path.resolve(directory, target);
+        const common = yield* fileSystem
+          .readFileString(path.join(gitDir, "commondir"))
+          .pipe(Effect.option);
+        commonDir =
+          Option.isSome(common) && common.value.trim().length > 0
+            ? path.resolve(gitDir, common.value.trim())
+            : gitDir;
+      } else if (info.value.type !== "Directory") {
+        return null;
+      }
+      const head = yield* fileSystem.readFileString(path.join(gitDir, "HEAD")).pipe(Effect.option);
+      const branch = Option.isSome(head)
+        ? (/^ref: refs\/heads\/(.+)$/.exec(head.value.trim())?.[1] ?? null)
+        : null;
+      return {
+        path: directory,
+        commonDir: yield* fileSystem
+          .realPath(commonDir)
+          .pipe(Effect.orElseSucceed(() => commonDir)),
+        linked: commonDir !== gitDir,
+        branch,
+      };
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
+  }
+});
+
+/**
+ * The linked git worktree holding a folder: its top folder and checked-out
+ * branch. A main checkout, a submodule, or a folder outside any repository
+ * yields null.
+ */
+export const resolveLinkedGitWorktree = Effect.fnUntraced(function* (folder: string) {
+  const checkout = yield* resolveGitCheckout(folder);
+  return checkout?.linked === true ? { path: checkout.path, branch: checkout.branch } : null;
+});
+
 export interface ClaudeAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: ClaudeSettings;
@@ -4805,7 +4952,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
         const now = yield* DateTime.now;
-        const session = providerSession({
+        let session = providerSession({
           providerSessionId: input.providerSessionId,
           providerInstanceId: adapterOptions.instanceId,
           cwd: input.runtimePolicy.cwd,
@@ -4934,6 +5081,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           new Map<string, OrchestrationV2ProviderThread>(),
         );
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
+        // Running cost per native thread. Claude's total_cost_usd counts from
+        // the start of the current query(), so each result adds only what it
+        // grew by since the last result from the same query.
+        const costUsdByNativeThread = new Map<string, number>();
+        let costBaseline: { readonly query: unknown; readonly totalCostUsd: number } | null = null;
         const goalCheckedTurns = new Set<string>();
         // Background subagents can finish after root settlement; retain their registry for wake evidence and hydration.
         const sessionSubagentsByTaskId = yield* Ref.make(new Map<string, ActiveClaudeSubagent>());
@@ -5042,15 +5194,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return { ...current, calls };
           });
         };
-        const isClaudeMonitorTask = (input: {
+        // The Monitor call's own turn item, derived the way its tool row is.
+        const claudeToolCallItemId = (toolUseId: string) =>
+          idAllocator.derive.turnItemFromProviderItem({
+            driver: CLAUDE_PROVIDER,
+            nativeItemId: toolUseId,
+          });
+        /**
+         * The turn item of the Monitor call that started this task, if one did;
+         * links the task to that call.
+         */
+        const claudeMonitorToolCallItemId = (input: {
           readonly nativeThreadId: string;
           readonly taskId: string;
           readonly toolUseId: string | undefined;
         }) =>
           Ref.modify(claudeMonitors, (current) => {
-            if (current.tasks.has(input.taskId)) return [true, current] as const;
+            const linked = current.tasks.get(input.taskId);
+            if (linked !== undefined) {
+              return [claudeToolCallItemId(linked.toolUseId), current] as const;
+            }
             if (input.toolUseId === undefined || !current.calls.has(input.toolUseId)) {
-              return [false, current] as const;
+              return [undefined, current] as const;
             }
             const calls = new Set(current.calls);
             calls.delete(input.toolUseId);
@@ -5058,7 +5223,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               toolUseId: input.toolUseId,
               nativeThreadId: input.nativeThreadId,
             });
-            return [true, { calls, tasks }] as const;
+            return [claudeToolCallItemId(input.toolUseId), { calls, tasks }] as const;
           });
         const endClaudeMonitorTasks = (
           ended: (taskId: string, task: { readonly nativeThreadId: string }) => boolean,
@@ -5201,6 +5366,125 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             },
           });
         });
+
+        // Claude removes an isolated subagent's worktree when the subagent
+        // changed nothing. A finished subagent whose worktree folder is gone
+        // records that, so its child thread returns to the parent's checkout.
+        const releaseRemovedSubagentWorktrees = Effect.gen(function* () {
+          for (const subagent of (yield* Ref.get(sessionSubagentsByTaskId)).values()) {
+            const worktree = subagent.task.worktree;
+            if (!worktree || subagent.task.status === "running") continue;
+            const exists = yield* fileSystem
+              .exists(worktree.path)
+              .pipe(Effect.orElseSucceed(() => true));
+            if (exists) continue;
+            subagent.task = { ...subagent.task, worktree: null, updatedAt: yield* DateTime.now };
+            yield* emitProviderEvent({
+              type: "subagent.updated",
+              driver: CLAUDE_PROVIDER,
+              subagent: subagent.task,
+            });
+          }
+        });
+
+        // A subagent run with worktree isolation works in its own git worktree,
+        // which no SDK message names. Its tool calls report the folder they run
+        // in, so the first call from a subagent records that worktree on it.
+        const subagentsCheckedForWorktree = new Set<string>();
+        const observeSubagentWorktree = Effect.fn("ClaudeAdapterV2.observeSubagentWorktree")(
+          function* (hookInput: Parameters<HookCallback>[0], sessionCwd: string | null) {
+            const taskId = hookInput.agent_id;
+            if (
+              hookInput.hook_event_name !== "PreToolUse" ||
+              taskId === undefined ||
+              subagentsCheckedForWorktree.has(taskId)
+            ) {
+              return;
+            }
+            // Registered from task_started; a call that races ahead of it is
+            // checked again on the next one.
+            const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
+            if (subagent === undefined) return;
+            subagentsCheckedForWorktree.add(taskId);
+            const worktree = yield* resolveLinkedGitWorktree(hookInput.cwd);
+            if (worktree === null) return;
+            const sessionWorktree =
+              sessionCwd === null ? null : yield* resolveLinkedGitWorktree(sessionCwd);
+            if (sessionWorktree?.path === worktree.path) return;
+            subagent.task = { ...subagent.task, worktree, updatedAt: yield* DateTime.now };
+            yield* emitProviderEvent({
+              type: "subagent.updated",
+              driver: CLAUDE_PROVIDER,
+              subagent: subagent.task,
+            });
+          },
+          (effect) =>
+            effect.pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.ignoreCause,
+            ),
+        );
+
+        // Where the main session works once Claude moved it itself; null
+        // until then, so consumers keep the thread's cwd.
+        let movedSessionCwd: string | null = null;
+        // The checkout the thread currently lives in. Cached because
+        // ExitWorktree(remove) can delete the old checkout before its hook
+        // runs, so the old folder must never be re-resolved.
+        let currentCheckout: { path: string; commonDir: string } | null = null;
+        // Claude moves its own session (EnterWorktree, ExitWorktree, a `cd`). A move into
+        // another checkout of the thread's repository moves the thread, its branch and later
+        // turns with it; a move within the checkout or out of the repository changes nothing.
+        const followSessionCwd = Effect.fn("ClaudeAdapterV2.followSessionCwd")(
+          function* (
+            hookInput: Parameters<HookCallback>[0],
+            threadId: ThreadId,
+            threadCwd: string | null,
+          ) {
+            // A subagent's own folder is handled by observeSubagentWorktree.
+            if (hookInput.agent_id !== undefined) return;
+            const newCwd = claudeMovedSessionCwd(hookInput);
+            if (newCwd === null) return;
+            if (currentCheckout === null) {
+              if (threadCwd === null) return;
+              currentCheckout = yield* resolveGitCheckout(threadCwd);
+            }
+            const current = currentCheckout;
+            const next = yield* resolveGitCheckout(newCwd);
+            if (
+              current === null ||
+              next === null ||
+              current.commonDir !== next.commonDir ||
+              current.path === next.path
+            ) {
+              return;
+            }
+            movedSessionCwd = newCwd;
+            currentCheckout = { path: next.path, commonDir: next.commonDir };
+            session = { ...session, cwd: newCwd, updatedAt: yield* DateTime.now };
+            // Persist the new cwd so a later model change does not see a
+            // stale session cwd and restart the session.
+            yield* emitProviderEvent({
+              type: "provider_session.updated",
+              driver: CLAUDE_PROVIDER,
+              providerSession: session,
+            });
+            yield* emitProviderEvent({
+              type: "provider_thread.workspace_moved",
+              driver: CLAUDE_PROVIDER,
+              threadId,
+              checkoutPath: next.path,
+              branch: next.branch,
+            });
+          },
+          (effect) =>
+            effect.pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.ignoreCause,
+            ),
+        );
 
         // Claude has no recovered frame; the next assistant message proves recovery.
         // Runs on every model output frame and is almost always a no-op; only a pending retry gets a span.
@@ -5406,6 +5690,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster, awaitedTaskIds),
             ...(goalsByNativeThread.has(input.nativeThreadId)
               ? { goal: goalsByNativeThread.get(input.nativeThreadId) ?? null }
+              : {}),
+            ...(costUsdByNativeThread.has(input.nativeThreadId)
+              ? { costUsd: costUsdByNativeThread.get(input.nativeThreadId) }
               : {}),
             updatedAt: now,
           };
@@ -5929,7 +6216,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             .subagentLaunchToolUseId({
               sessionId: resume.nativeThreadId,
               agentId: resume.taskId,
-              dir: resume.context.input.runtimePolicy.cwd,
+              dir: movedSessionCwd ?? resume.context.input.runtimePolicy.cwd,
               threadId: resume.context.input.threadId,
               providerSessionId: input.providerSessionId,
             })
@@ -6457,6 +6744,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly owner?: ActiveClaudeSubagent;
           readonly nativeTaskType?: string;
           readonly progress?: string;
+          /** Merged into the recorded usage; omitted fields keep their last value. */
+          readonly usage?: OrchestrationV2SubagentUsage;
           readonly workflowFrame?: unknown;
           readonly workflowName?: string;
           readonly workflowRunHandles?: OrchestrationV2WorkflowRunHandles;
@@ -6533,9 +6822,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existingSubagent === undefined
               ? undefined
               : isReopen
-                ? (({ progress: _staleProgress, ...rest }) => ({ ...rest, result: null }))(
-                    existingSubagent.task,
-                  )
+                ? (({ progress: _staleProgress, endedBy: _staleEndedBy, ...rest }) => ({
+                    ...rest,
+                    result: null,
+                  }))(existingSubagent.task)
                 : existingSubagent.task;
           const workflow = mergeClaudeWorkflowProgress({
             previous: priorTask?.workflow,
@@ -6599,6 +6889,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }
               : {}),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
+            ...(input.usage === undefined
+              ? {}
+              : { usage: { ...priorTask?.usage, ...input.usage } }),
             ...(workflowWithThreads === undefined ? {} : { workflow: workflowWithThreads }),
             ...(input.result === undefined ? {} : { result: input.result }),
             ...(isReopen ? { startedAt: now } : {}),
@@ -7618,6 +7911,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           for (const toolCall of endingSubagentCalls) {
             subagentToolCalls.delete(toolCall.nativeItemId);
           }
+          yield* releaseRemovedSubagentWorktrees;
 
           if (
             input.context.assistant.emittedNativeItemIds.size === 0 &&
@@ -7811,12 +8105,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     ...(goal.checks === undefined ? {} : { checks: goal.checks }),
                   });
                 }
+                const totalCostUsd = input.result?.total_cost_usd;
+                // Crash and startup results can report zero; they add nothing.
+                if (nativeThreadId !== null && totalCostUsd !== undefined && totalCostUsd > 0) {
+                  const previous =
+                    costBaseline !== null && costBaseline.query === liveQuery
+                      ? costBaseline.totalCostUsd
+                      : 0;
+                  // A smaller total means the running count restarted.
+                  const turnCostUsd =
+                    totalCostUsd >= previous ? totalCostUsd - previous : totalCostUsd;
+                  costBaseline = { query: liveQuery, totalCostUsd };
+                  costUsdByNativeThread.set(
+                    nativeThreadId,
+                    (costUsdByNativeThread.get(nativeThreadId) ?? 0) + turnCostUsd,
+                  );
+                }
                 const providerThread: OrchestrationV2ProviderThread = {
                   ...input.context.input.providerThread,
                   providerSessionId: session.id,
                   ...(clearConversationHead ? { nativeConversationHeadRef: null } : {}),
                   ...(nativeThreadId !== null && goalsByNativeThread.has(nativeThreadId)
                     ? { goal: goalsByNativeThread.get(nativeThreadId) ?? null }
+                    : {}),
+                  ...(nativeThreadId !== null && costUsdByNativeThread.has(nativeThreadId)
+                    ? { costUsd: costUsdByNativeThread.get(nativeThreadId) }
                     : {}),
                   firstRunOrdinal:
                     input.context.input.providerThread.firstRunOrdinal ??
@@ -8299,7 +8612,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 task.nativeThreadId === input.nativeThreadId && !listedTaskIds.has(taskId),
             );
             for (const entry of roster) {
-              const task = parseClaudeBackgroundTaskEntry(entry, monitorTasks);
+              const task = parseClaudeBackgroundTaskEntry(entry, (taskId) => {
+                const monitor = monitorTasks.get(taskId);
+                return monitor === undefined ? undefined : claudeToolCallItemId(monitor.toolUseId);
+              });
               if (task !== null) {
                 nextTasks.push(task);
               }
@@ -8315,7 +8631,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               claudePendingBackgroundTask({
                 taskId: message.task_id,
                 taskType: claudeTaskTypeFromSdkMessage(message),
-                startedByMonitor: yield* isClaudeMonitorTask({
+                monitorToolCallItemId: yield* claudeMonitorToolCallItemId({
                   nativeThreadId: input.nativeThreadId,
                   taskId: message.task_id,
                   toolUseId: message.tool_use_id,
@@ -8993,21 +9309,46 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? undefined
                 : canonicalClaudeSubagentModel(subagentModelCatalog, snapshotModel);
             if (parentToolUseId !== null && model !== undefined) {
+              // The subagent's own context, from its latest API response. The
+              // window follows the parent's selection when it runs the same
+              // model, since that selection carries the context-size option.
+              const usage =
+                message.message.usage === undefined || message.message.model === "<synthetic>"
+                  ? undefined
+                  : {
+                      context: claudeProviderTurnTokenUsage(
+                        message.message.usage,
+                        claudeContextWindow(
+                          model === context.input.modelSelection.model
+                            ? context.input.modelSelection
+                            : { instanceId: context.input.modelSelection.instanceId, model },
+                        ),
+                        DateTime.formatIso(now),
+                        adapterOptions.settings.autoCompactWindow,
+                      ),
+                    };
               const subagent = yield* resolveSubagentByToolUseId(context, parentToolUseId);
               if (subagent === undefined) {
+                // Kept for task_started: this reply is replayed without the
+                // usage step, and a short subagent may send no other.
                 rememberPendingClaudeSubagentLaunch(
                   pendingSubagentLaunchesByToolUseId,
                   parentToolUseId,
-                  { model },
+                  { model, ...(usage === undefined ? {} : { usage }) },
                 );
-              } else if (subagent.task.status === "running" && subagent.task.model !== model) {
-                yield* updateClaudeSubagentNode({
-                  context,
-                  taskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
-                  toolUseId: parentToolUseId,
-                  model,
-                  status: subagent.task.status,
-                });
+              } else if (subagent.task.status === "running") {
+                const usageChanged =
+                  usage !== undefined && claudeSubagentUsageChanged(subagent.task.usage, usage);
+                if (subagent.task.model !== model || usageChanged) {
+                  yield* updateClaudeSubagentNode({
+                    context,
+                    taskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
+                    toolUseId: parentToolUseId,
+                    model,
+                    ...(usageChanged ? { usage } : {}),
+                    status: subagent.task.status,
+                  });
+                }
               }
             }
           }
@@ -9137,6 +9478,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 ...(model === undefined ? {} : { model }),
                 ...(launch?.effort === undefined ? {} : { effort: launch.effort }),
+                ...(launch?.usage === undefined ? {} : { usage: launch.usage }),
                 ...(owner === undefined ? {} : { owner }),
                 ...(isWorkflow
                   ? {
@@ -9177,11 +9519,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message.task_id,
             );
             const carriesWorkflowTelemetry = hasClaudeWorkflowSnapshot(message);
-            const isWorkflowCoordinator =
-              (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)?.task.workflow !==
-              undefined;
+            const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id);
+            const isWorkflowCoordinator = registered?.task.workflow !== undefined;
+            // A coordinator's totals already live in its workflow snapshot.
+            const usage = isWorkflowCoordinator ? undefined : claudeSubagentTaskUsage(message);
+            const usageChanged =
+              usage !== undefined && claudeSubagentUsageChanged(registered?.task.usage, usage);
             if (
-              (carriesWorkflowTelemetry || (progress.length > 0 && !isWorkflowCoordinator)) &&
+              (carriesWorkflowTelemetry ||
+                ((progress.length > 0 || usageChanged) && !isWorkflowCoordinator)) &&
               !context.ignoredTaskIds.has(message.task_id) &&
               !isBackgroundTask
             ) {
@@ -9190,6 +9536,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(progress.length === 0 ? {} : { progress }),
+                ...(usage === undefined ? {} : { usage }),
                 workflowFrame: message,
                 status: "running",
               });
@@ -9269,10 +9616,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               !context.ignoredTaskIds.has(message.task_id) &&
               !appliedSubagentOutcomes.has(message)
             ) {
+              const isWorkflowCoordinator =
+                (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)?.task.workflow !==
+                undefined;
+              const usage = isWorkflowCoordinator ? undefined : claudeSubagentTaskUsage(message);
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+                ...(usage === undefined ? {} : { usage }),
                 workflowFrame: message,
                 nativeOutcome: message,
                 result: message.summary,
@@ -10539,6 +10891,61 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
                 }),
             canUseTool,
+            hooks: {
+              // Observes only and never blocks: it answers after at most a few
+              // file reads, once per subagent.
+              PreToolUse: [
+                {
+                  hooks: [
+                    (hookInput) =>
+                      runPromise(
+                        observeSubagentWorktree(
+                          hookInput,
+                          movedSessionCwd ?? turnInput.runtimePolicy.cwd,
+                        ),
+                      ).then(
+                        () => ({}),
+                        () => ({}),
+                      ),
+                  ],
+                },
+              ],
+              CwdChanged: [
+                {
+                  hooks: [
+                    (hookInput) =>
+                      runPromise(
+                        followSessionCwd(
+                          hookInput,
+                          turnInput.threadId,
+                          turnInput.runtimePolicy.cwd,
+                        ),
+                      ).then(
+                        () => ({}),
+                        () => ({}),
+                      ),
+                  ],
+                },
+              ],
+              PostToolUse: [
+                {
+                  matcher: "EnterWorktree|ExitWorktree",
+                  hooks: [
+                    (hookInput) =>
+                      runPromise(
+                        followSessionCwd(
+                          hookInput,
+                          turnInput.threadId,
+                          turnInput.runtimePolicy.cwd,
+                        ),
+                      ).then(
+                        () => ({}),
+                        () => ({}),
+                      ),
+                  ],
+                },
+              ],
+            },
             onUserDialog,
             onElicitation,
             supportedDialogKinds: ["resume_return"],
@@ -10746,6 +11153,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               pdfBudgets.get(nativeThreadId)!,
               persistAttachmentBudget(nativeThreadId),
             );
+            if (
+              !costUsdByNativeThread.has(nativeThreadId) &&
+              turnInput.providerThread.costUsd !== undefined
+            ) {
+              costUsdByNativeThread.set(nativeThreadId, turnInput.providerThread.costUsd);
+            }
             const userMessage =
               promptUuid === null
                 ? null
@@ -11355,7 +11768,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           instanceId: adapterOptions.instanceId,
           driver: CLAUDE_PROVIDER,
           providerSessionId: input.providerSessionId,
-          providerSession: session,
+          // Read through: followSessionCwd replaces it when Claude moves the session.
+          get providerSession() {
+            return session;
+          },
           getModelContextWindow: (selection) => claudeContextWindow(selection) ?? undefined,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           backgroundTasksEndWithProcess: true,
@@ -11760,8 +12176,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const sourceNativeThreadId = yield* getNativeThreadId(forkInput.sourceProviderThread);
               yield* closeLiveQueryForNativeThread(sourceNativeThreadId);
               const upToMessageId = yield* resolveClaudeForkUpToMessageId(forkInput);
+              const forkDir = movedSessionCwd ?? input.runtimePolicy.cwd;
               const forkOptions: ForkSessionOptions = {
-                ...(input.runtimePolicy.cwd === null ? {} : { dir: input.runtimePolicy.cwd }),
+                ...(forkDir === null ? {} : { dir: forkDir }),
                 ...(upToMessageId === undefined ? {} : { upToMessageId }),
               };
               const forked = yield* queryRunner.forkSession({

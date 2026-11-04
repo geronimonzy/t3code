@@ -8,6 +8,8 @@ import type {
   OrchestrationV2ProviderGoal,
   OrchestrationV2RunStatus,
   OrchestrationV2ProviderFailureClass,
+  OrchestrationV2SubagentStatus,
+  OrchestrationV2SubagentUsage,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
   PlanId,
@@ -167,6 +169,14 @@ export interface EnvironmentThreadShell {
   >;
   readonly providerInstanceHistory: ReadonlyArray<ProviderInstanceId>;
   readonly goal: OrchestrationV2ProviderGoal | null;
+  /**
+   * Live status of the parent's subagent record, set only on a subagent's
+   * child thread (which has no runs of its own); null otherwise or when the
+   * server predates it.
+   */
+  readonly subagentStatus?: OrchestrationV2SubagentStatus | null;
+  /** Usage of that same record, when its provider reports one (Claude); null otherwise. */
+  readonly subagentUsage?: OrchestrationV2SubagentUsage | null;
   readonly itemCount: number;
   readonly visibleItemCount: number;
   readonly createdAt: string;
@@ -318,6 +328,8 @@ export function presentThreadShell(
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
     providerInstanceHistory: thread.providerInstanceHistory ?? [],
     goal: thread.goal ?? null,
+    subagentStatus: thread.subagentStatus ?? null,
+    subagentUsage: thread.subagentUsage ?? null,
     itemCount: thread.itemCount,
     visibleItemCount: thread.visibleItemCount,
     createdAt: iso(thread.createdAt),

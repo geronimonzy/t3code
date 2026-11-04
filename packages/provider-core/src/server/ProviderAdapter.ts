@@ -100,6 +100,18 @@ export const ProviderAdapterV2Event = Schema.Union([
     pendingBackgroundWork: Schema.optional(Schema.Boolean),
     retainedNativeTurnIds: Schema.optional(Schema.Array(Schema.String)),
   }),
+  /**
+   * The provider moved its own session into another checkout of the thread's
+   * repository (Claude's EnterWorktree, for example). The thread follows: its
+   * workspace becomes that linked worktree, or the project root (null).
+   */
+  Schema.Struct({
+    type: Schema.Literal("provider_thread.workspace_moved"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    checkoutPath: Schema.String,
+    branch: Schema.NullOr(Schema.String),
+  }),
   Schema.Struct({
     type: Schema.Literal("provider_turn.updated"),
     driver: ProviderDriverKind,

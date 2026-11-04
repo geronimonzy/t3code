@@ -21,6 +21,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlError from "effect/sql/SqlError";
 
@@ -35,6 +36,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
@@ -233,6 +235,9 @@ function compactUndefined<T extends Record<string, unknown>>(record: T): T {
   return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T;
 }
 
+const trimTrailingSeparators = (folder: string) =>
+  folder.length > 1 ? folder.replace(/[\\/]+$/, "") : folder;
+
 const decodeDomainEvent = Schema.decodeUnknownEffect(OrchestrationV2DomainEvent);
 
 export const layer: Layer.Layer<
@@ -242,6 +247,7 @@ export const layer: Layer.Layer<
   | GitVcsDriver.GitVcsDriver
   | IdAllocator.IdAllocatorV2
   | ProjectionStore.ProjectionStoreV2
+  | ProjectStore.ProjectStoreV2
   | ThreadCommandExecutor.ThreadCommandExecutor
   | ProviderInstanceRegistry.ProviderInstanceRegistry
 > = Layer.effect(
@@ -250,6 +256,7 @@ export const layer: Layer.Layer<
     const eventSink = yield* EventSink.EventSinkV2;
     const git = yield* GitVcsDriver.GitVcsDriver;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const projectStore = yield* ProjectStore.ProjectStoreV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const analytics = yield* ProviderTurnAnalytics;
@@ -517,6 +524,41 @@ export const layer: Layer.Layer<
                       retainedNativeTurnIds: new Set(input.event.retainedNativeTurnIds),
                     })),
                   ];
+            }
+            case "provider_thread.workspace_moved": {
+              // Written here rather than dispatched as thread.metadata.update: the
+              // provider session moved itself, so it must stay attached, and that
+              // command detaches every session on a workspace change.
+              const { threadId, checkoutPath, branch } = input.event;
+              const thread = yield* projections.getThread(threadId).pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+              );
+              if (thread === null) return [];
+              // A thread in its project's own root has no worktree path, so the
+              // destination counts as the project root only when it is that folder.
+              const project = yield* projectStore
+                .getShell(thread.projectId)
+                .pipe(Effect.orElseSucceed(() => Option.none()));
+              const worktreePath =
+                Option.isSome(project) &&
+                trimTrailingSeparators(project.value.workspaceRoot) ===
+                  trimTrailingSeparators(checkoutPath)
+                  ? null
+                  : checkoutPath;
+              if (thread.worktreePath === worktreePath && thread.branch === branch) {
+                return [];
+              }
+              const now = yield* DateTime.now;
+              return [
+                yield* makeDomainEvent(input, {
+                  type: "thread.metadata-updated",
+                  threadId,
+                  payload: { ...thread, worktreePath, branch, updatedAt: now },
+                  occurredAt: now,
+                }),
+              ];
             }
             case "provider_turn.updated":
               return [
@@ -816,10 +858,14 @@ export const layer: Layer.Layer<
                   });
                 }),
               ),
+              // These rewrite the whole thread row, so they read and write under
+              // the thread's command lock.
               (effect) =>
                 input.event.type === "app_thread.created"
                   ? threadCommands.withLock(input.event.appThread.id, effect)
-                  : effect,
+                  : input.event.type === "provider_thread.workspace_moved"
+                    ? threadCommands.withLock(input.event.threadId, effect)
+                    : effect,
             ),
         ),
     });

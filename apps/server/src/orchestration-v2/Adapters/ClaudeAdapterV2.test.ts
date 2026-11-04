@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off -- workflow fixtures use files and the fake Claude CLI uses Node streams
+// @effect-diagnostics nodeBuiltinImport:off -- workflow fixtures use files, the fake Claude CLI uses Node streams, and worktree tests build a real git repository
+import * as NodeChildProcess from "node:child_process";
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -98,6 +99,7 @@ import type * as ProviderContinuationRequests from "@t3tools/provider-core/serve
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as RunExecutionService from "../RunExecutionService.ts";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
 import { provideDeterministicTestRuntime } from "../testkit/DeterministicRuntime.ts";
 import { runOrchestratorV2Scenario } from "../testkit/OrchestratorScenario.ts";
@@ -2992,6 +2994,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readonly cache_read_input_tokens: number;
     };
     readonly modelUsage?: SDKResultMessage["modelUsage"];
+    readonly totalCostUsd?: number;
   }) =>
     claudeSdkFrame({
       type: "result",
@@ -3002,7 +3005,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       num_turns: input.numTurns ?? 1,
       result: input.result,
       stop_reason: "end_turn",
-      total_cost_usd: 0,
+      total_cost_usd: input.totalCostUsd ?? 0,
       usage: input.usage ?? {
         input_tokens: 1,
         output_tokens: 1,
@@ -9373,8 +9376,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
           .pendingBackgroundTasks;
+        // The monitor points at the Monitor call's own turn item, so clients can jump to it.
+        const monitorCall = harness.events.find(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "toolu_monitor_0",
+        );
+        assert.ok(monitorCall?.type === "turn_item.updated");
         assert.deepEqual(roster, [
-          { taskId: longRunning.taskId, kind: "monitor", description: "Monitor 0" },
+          {
+            taskId: longRunning.taskId,
+            kind: "monitor",
+            toolCallItemId: monitorCall.turnItem.id,
+            description: "Monitor 0",
+          },
         ]);
       }).pipe(
         Effect.provide(
@@ -14334,6 +14349,276 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("records a subagent's own context and run totals on its record", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TOOL_USE_ID = "toolu-usage-subagent";
+        const TASK_ID = "task-usage-subagent";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-subagent-usage"),
+            text: "Spawn a subagent.",
+            attachments: [],
+          }),
+        );
+        const subagentResponse = (uuid: string, outputTokens: number) =>
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: TOOL_USE_ID,
+            message: {
+              model: CLAUDE_TEST_MODEL_SELECTION.model,
+              id: "msg_usage_subagent",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: "Looking." }],
+              usage: {
+                input_tokens: 10,
+                cache_creation_input_tokens: 990,
+                cache_read_input_tokens: 20_000,
+                output_tokens: outputTokens,
+              },
+            },
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        for (const frame of [
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              model: CLAUDE_TEST_MODEL_SELECTION.model,
+              id: "msg_usage_launch",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: TOOL_USE_ID,
+                  name: "Agent",
+                  input: { description: "Usage", prompt: "Look around." },
+                },
+              ],
+              usage: { input_tokens: 90_000, output_tokens: 40 },
+            },
+            uuid: "00000000-0000-4000-8000-000000000a01",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "Usage",
+            task_type: "local_agent",
+            uuid: "00000000-0000-4000-8000-000000000a02",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          subagentResponse("00000000-0000-4000-8000-000000000a03", 7),
+          // The CLI repeats a response's usage on each of its content blocks.
+          subagentResponse("00000000-0000-4000-8000-000000000a04", 7),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "Reading files",
+            usage: { total_tokens: 21_007, tool_uses: 3, duration_ms: 4_200 },
+            uuid: "00000000-0000-4000-8000-000000000a05",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            status: "completed",
+            output_file: "",
+            summary: "Looked around.",
+            usage: { total_tokens: 23_500, tool_uses: 5, duration_ms: 9_000 },
+            uuid: "00000000-0000-4000-8000-000000000a06",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000a07",
+            result: "Done.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        const records = harness.events.flatMap((event) =>
+          event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === TASK_ID
+            ? [event.subagent]
+            : [],
+        );
+        // The parent's own report still describes only the parent.
+        const parentUsage = harness.events.flatMap((event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage !== undefined
+            ? [event.providerTurn.tokenUsage]
+            : [],
+        );
+        assert.deepEqual(
+          parentUsage.map(({ usedTokens }) => usedTokens),
+          [90_040],
+        );
+        const maxTokens = parentUsage[0]?.maxTokens;
+        assert.isNumber(maxTokens);
+        const final = records.at(-1);
+        assert.equal(final?.status, "completed");
+        // Its own context, never the parent's 90k.
+        assert.deepEqual(
+          {
+            usedTokens: final?.usage?.context?.usedTokens,
+            inputTokens: final?.usage?.context?.inputTokens,
+            outputTokens: final?.usage?.context?.outputTokens,
+            maxTokens: final?.usage?.context?.maxTokens,
+          },
+          { usedTokens: 21_007, inputTokens: 21_000, outputTokens: 7, maxTokens },
+        );
+        // One update per change: start, the response (its repeated block adds
+        // none), progress, then the notification's final totals.
+        assert.deepEqual(
+          records.map(({ usage }) =>
+            usage === undefined
+              ? null
+              : {
+                  totalTokens: usage.totalTokens,
+                  toolUses: usage.toolUses,
+                  durationMs: usage.durationMs,
+                },
+          ),
+          [
+            null,
+            { totalTokens: undefined, toolUses: undefined, durationMs: undefined },
+            { totalTokens: 21_007, toolUses: 3, durationMs: 4_200 },
+            { totalTokens: 23_500, toolUses: 5, durationMs: 9_000 },
+          ],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps the context of a subagent reply that arrives before task_started", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TOOL_USE_ID = "toolu-early-usage";
+        const TASK_ID = "task-early-usage";
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-early-usage"),
+            text: "Spawn a subagent.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              model: CLAUDE_TEST_MODEL_SELECTION.model,
+              id: "msg_early_launch",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: TOOL_USE_ID,
+                  name: "Agent",
+                  input: { description: "Early", prompt: "Answer quickly." },
+                },
+              ],
+              usage: { input_tokens: 90_000, output_tokens: 40 },
+            },
+            uuid: "00000000-0000-4000-8000-000000000b01",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          // Its only reply, before task_started registers it.
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: TOOL_USE_ID,
+            message: {
+              model: CLAUDE_TEST_MODEL_SELECTION.model,
+              id: "msg_early_reply",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: "Done." }],
+              usage: {
+                input_tokens: 5,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 12_000,
+                output_tokens: 3,
+              },
+            },
+            uuid: "00000000-0000-4000-8000-000000000b02",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "Early",
+            task_type: "local_agent",
+            uuid: "00000000-0000-4000-8000-000000000b03",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            status: "completed",
+            output_file: "",
+            summary: "Answered.",
+            uuid: "00000000-0000-4000-8000-000000000b04",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b05", result: "Done." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        const final = harness.events
+          .flatMap((event) =>
+            event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === TASK_ID
+              ? [event.subagent]
+              : [],
+          )
+          .at(-1);
+        assert.equal(final?.status, "completed");
+        assert.equal(final?.usage?.context?.usedTokens, 12_008);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("gives a nested subagent its own effort, else the one its owner runs at", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -14917,6 +15202,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             result: "The subagent finished with RESUME_SETTLE_DONE.",
           }),
         );
+        const resumeRunEventsStart = harness.events.length;
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -14966,6 +15252,38 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.lengthOf(resumedWorkIndexes, 1);
         assert.isAbove(resumedWorkIndexes[0] ?? -1, reopenIndex);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
+
+        // A resuming run that did not start out following the child thread
+        // (its subagent row was cancelled when the launch run settled) still
+        // gets the child's root turn: running on resume, then the outcome.
+        const resumeIdentity: RunExecutionService.ProviderEventRouteIdentity = {
+          threadId: harness.threadId,
+          runId: RunId.make("run-attempt-claude-wake-9c"),
+          attemptId: RunAttemptId.make("attempt-claude-wake-9c"),
+          providerThreadId: harness.providerThread.id,
+        };
+        let routing = RunExecutionService.makeProviderEventRoutingState({
+          identity: resumeIdentity,
+          providerTurnId: null,
+        });
+        const routedChildRootStatuses = harness.events
+          .slice(resumeRunEventsStart)
+          .flatMap((event) => {
+            const [routed, next] = RunExecutionService.routeProviderEvent(
+              event,
+              resumeIdentity,
+              routing,
+            );
+            routing = next;
+            return routed &&
+              event.type === "node.updated" &&
+              event.node.kind === "root_turn" &&
+              event.node.runId === null &&
+              event.node.nativeItemRef?.nativeId === SUBAGENT_TASK_ID
+              ? [event.node.status]
+              : [];
+          });
+        assert.deepEqual(routedChildRootStatuses, ["running", "completed"]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -18129,6 +18447,520 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => event.type === "message.updated" && event.message.role === "assistant",
           ),
         );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+  });
+
+  describe("subagent worktrees", () => {
+    // A repository with one commit and a linked worktree on branch "feature".
+    const makeRepositoryWithWorktree = Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = NodeFS.realpathSync(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-worktree-" }),
+      );
+      const repository = `${root}/repo`;
+      const worktree = `${root}/repo-feature`;
+      const git = (cwd: string, ...args: ReadonlyArray<string>) =>
+        NodeChildProcess.execFileSync("git", [...args], {
+          cwd,
+          stdio: "ignore",
+          env: {
+            ...process.env,
+            GIT_AUTHOR_NAME: "t3",
+            GIT_AUTHOR_EMAIL: "t3@example.com",
+            GIT_COMMITTER_NAME: "t3",
+            GIT_COMMITTER_EMAIL: "t3@example.com",
+          },
+        });
+      NodeFS.mkdirSync(repository);
+      git(repository, "init", "-q");
+      git(repository, "commit", "-q", "--allow-empty", "-m", "init");
+      git(repository, "worktree", "add", "-q", "-b", "feature", worktree);
+      NodeFS.mkdirSync(`${worktree}/nested`);
+      return { root, repository, worktree };
+    });
+
+    it.effect("recognizes a linked worktree and its branch from any folder inside it", () =>
+      Effect.gen(function* () {
+        const { root, repository, worktree } = yield* makeRepositoryWithWorktree;
+        const expected = { path: worktree, branch: "feature" };
+        assert.deepEqual(yield* ClaudeAdapterV2.resolveLinkedGitWorktree(worktree), expected);
+        assert.deepEqual(
+          yield* ClaudeAdapterV2.resolveLinkedGitWorktree(`${worktree}/nested`),
+          expected,
+        );
+        assert.isNull(yield* ClaudeAdapterV2.resolveLinkedGitWorktree(repository));
+        assert.isNull(yield* ClaudeAdapterV2.resolveLinkedGitWorktree(root));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
+    it.effect("records the worktree a subagent's tool calls run in", () =>
+      Effect.gen(function* () {
+        const { repository, worktree } = yield* makeRepositoryWithWorktree;
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("worktree-attempt"),
+            text: "Fix it in a worktree.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId: "agent-worktree",
+            toolUseId: "toolu_worktree_agent",
+            uuid: "00000000-0000-4000-8000-000000000701",
+          }),
+        );
+        const hook = harness.getOpenedOptions()?.hooks?.PreToolUse?.[0]?.hooks[0];
+        assert.isDefined(hook);
+        const callFrom = (cwd: string, agentId: string | undefined) =>
+          Effect.promise(() =>
+            hook!(
+              {
+                hook_event_name: "PreToolUse",
+                session_id: WAKE_NATIVE_SESSION,
+                transcript_path: "/tmp/transcript.jsonl",
+                cwd,
+                ...(agentId === undefined ? {} : { agent_id: agentId }),
+                tool_name: "Bash",
+                tool_input: { command: "ls" },
+                tool_use_id: "toolu_ls",
+              } as Parameters<NonNullable<typeof hook>>[0],
+              "toolu_ls",
+              { signal: new AbortController().signal },
+            ),
+          );
+        // The main agent in a worktree, and a subagent in the main checkout, are not recorded.
+        assert.deepEqual(yield* callFrom(worktree, undefined), {});
+        yield* callFrom(worktree, "agent-worktree");
+        yield* callFrom(repository, "agent-worktree");
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "worktree-result", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const worktrees = harness.events.flatMap((event) =>
+          event.type === "subagent.updated" && event.subagent.worktree != null
+            ? [event.subagent.worktree]
+            : [],
+        );
+        assert.deepEqual(worktrees.at(-1), { path: worktree, branch: "feature" });
+        assert.isTrue(
+          worktrees.every((entry) => entry.path === worktree),
+          "a later call from another folder does not move the subagent",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("records that a finished subagent's worktree was removed", () =>
+      Effect.gen(function* () {
+        const { repository, worktree } = yield* makeRepositoryWithWorktree;
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("worktree-removed-attempt"),
+            text: "Look, but change nothing.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId: "agent-clean",
+            toolUseId: "toolu_clean_agent",
+            uuid: "00000000-0000-4000-8000-000000000711",
+          }),
+        );
+        const hook = harness.getOpenedOptions()?.hooks?.PreToolUse?.[0]?.hooks[0];
+        assert.isDefined(hook);
+        yield* Effect.promise(() =>
+          hook!(
+            {
+              hook_event_name: "PreToolUse",
+              session_id: WAKE_NATIVE_SESSION,
+              transcript_path: "/tmp/transcript.jsonl",
+              cwd: worktree,
+              agent_id: "agent-clean",
+              tool_name: "Bash",
+              tool_input: { command: "ls" },
+              tool_use_id: "toolu_ls",
+            } as Parameters<NonNullable<typeof hook>>[0],
+            "toolu_ls",
+            { signal: new AbortController().signal },
+          ),
+        );
+        // Claude removes an untouched worktree when the subagent ends.
+        NodeChildProcess.execFileSync("git", ["worktree", "remove", worktree], {
+          cwd: repository,
+          stdio: "ignore",
+        });
+        yield* harness.offerAndWait(
+          makeSubagentNotificationFrame({
+            taskId: "agent-clean",
+            toolUseId: "toolu_clean_agent",
+            summary: "Nothing to change.",
+            uuid: "00000000-0000-4000-8000-000000000712",
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "worktree-removed-result", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const worktrees = harness.events.flatMap((event) =>
+          event.type === "subagent.updated" && event.subagent.worktree !== undefined
+            ? [event.subagent.worktree]
+            : [],
+        );
+        assert.deepEqual(worktrees.at(0), { path: worktree, branch: "feature" });
+        assert.isNull(worktrees.at(-1));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("moves the thread when Claude moves its session to another checkout", () =>
+      Effect.gen(function* () {
+        const { root, repository, worktree } = yield* makeRepositoryWithWorktree;
+        const otherRepository = `${root}/other`;
+        NodeFS.mkdirSync(otherRepository);
+        NodeChildProcess.execFileSync("git", ["init", "-q"], {
+          cwd: otherRepository,
+          stdio: "ignore",
+        });
+        const mainBranch = NodeChildProcess.execFileSync("git", ["branch", "--show-current"], {
+          cwd: repository,
+          encoding: "utf8",
+        }).trim();
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("cwd-moved-attempt"),
+            text: "Work in a worktree.",
+            attachments: [],
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: repository },
+          }),
+        );
+        const hook = harness.getOpenedOptions()?.hooks?.CwdChanged?.[0]?.hooks[0];
+        assert.isDefined(hook);
+        const moveTo = (newCwd: string, agentId?: string) =>
+          Effect.promise(() =>
+            hook!(
+              {
+                hook_event_name: "CwdChanged",
+                session_id: WAKE_NATIVE_SESSION,
+                transcript_path: "/tmp/transcript.jsonl",
+                cwd: newCwd,
+                old_cwd: repository,
+                new_cwd: newCwd,
+                ...(agentId === undefined ? {} : { agent_id: agentId }),
+              } as Parameters<NonNullable<typeof hook>>[0],
+              undefined,
+              { signal: new AbortController().signal },
+            ),
+          );
+        NodeFS.mkdirSync(`${repository}/src`);
+
+        // A subagent's folder and a subfolder of the thread's checkout move nothing.
+        yield* moveTo(worktree, "agent-elsewhere");
+        yield* moveTo(`${repository}/src`);
+        assert.deepEqual(yield* moveTo(worktree), {});
+        assert.strictEqual(harness.runtime.providerSession.cwd, worktree);
+        // Within the worktree, or out to another repository, the thread stays.
+        yield* moveTo(`${worktree}/nested`);
+        yield* moveTo(otherRepository);
+        // Back in the main checkout, the thread returns to the project root.
+        yield* moveTo(repository);
+
+        // Events arrive in order, so the turn's end follows every move.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "cwd-moved-result", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const moves = harness.events.flatMap((event) =>
+          event.type === "provider_thread.workspace_moved"
+            ? [{ threadId: event.threadId, checkoutPath: event.checkoutPath, branch: event.branch }]
+            : [],
+        );
+        assert.deepEqual(moves, [
+          { threadId: harness.threadId, checkoutPath: worktree, branch: "feature" },
+          { threadId: harness.threadId, checkoutPath: repository, branch: mainBranch },
+        ]);
+        // Each accepted move also persists the session's new cwd.
+        const sessionCwds = harness.events.flatMap((event) =>
+          event.type === "provider_session.updated" ? [event.providerSession.cwd] : [],
+        );
+        assert.deepEqual(sessionCwds.slice(-2), [worktree, repository]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("moves the thread on EnterWorktree and ExitWorktree, which fire no CwdChanged", () =>
+      Effect.gen(function* () {
+        const { repository, worktree } = yield* makeRepositoryWithWorktree;
+        const mainBranch = NodeChildProcess.execFileSync("git", ["branch", "--show-current"], {
+          cwd: repository,
+          encoding: "utf8",
+        }).trim();
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("worktree-tools-attempt"),
+            text: "Work in a worktree.",
+            attachments: [],
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: repository },
+          }),
+        );
+        const matcher = harness.getOpenedOptions()?.hooks?.PostToolUse?.[0];
+        assert.strictEqual(matcher?.matcher, "EnterWorktree|ExitWorktree");
+        const hook = matcher?.hooks[0];
+        assert.isDefined(hook);
+        const toolDone = (toolName: string, toolResponse: unknown) =>
+          Effect.promise(() =>
+            hook!(
+              {
+                hook_event_name: "PostToolUse",
+                session_id: WAKE_NATIVE_SESSION,
+                transcript_path: "/tmp/transcript.jsonl",
+                cwd: repository,
+                tool_name: toolName,
+                tool_input: {},
+                tool_response: toolResponse,
+                tool_use_id: `toolu_${toolName}`,
+              } as Parameters<NonNullable<typeof hook>>[0],
+              `toolu_${toolName}`,
+              { signal: new AbortController().signal },
+            ),
+          );
+
+        yield* toolDone("EnterWorktree", {
+          worktreePath: worktree,
+          worktreeBranch: "feature",
+          message: "Entered.",
+        });
+        // ExitWorktree(remove) deletes the worktree before the hook runs.
+        NodeChildProcess.execFileSync("git", ["worktree", "remove", "--force", worktree], {
+          cwd: repository,
+          stdio: "ignore",
+        });
+        yield* toolDone("ExitWorktree", {
+          action: "remove",
+          originalCwd: repository,
+          worktreePath: worktree,
+          message: "Removed.",
+        });
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "worktree-tools-result", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const moves = harness.events.flatMap((event) =>
+          event.type === "provider_thread.workspace_moved"
+            ? [{ checkoutPath: event.checkoutPath, branch: event.branch }]
+            : [],
+        );
+        assert.deepEqual(moves, [
+          { checkoutPath: worktree, branch: "feature" },
+          { checkoutPath: repository, branch: mainBranch },
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("follows Claude back to the main checkout after its worktree was removed", () =>
+      Effect.gen(function* () {
+        const { repository, worktree } = yield* makeRepositoryWithWorktree;
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("cwd-removed-attempt"),
+            text: "Enter and remove a worktree.",
+            attachments: [],
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: repository },
+          }),
+        );
+        const hook = harness.getOpenedOptions()?.hooks?.CwdChanged?.[0]?.hooks[0];
+        assert.isDefined(hook);
+        const moveTo = (newCwd: string, oldCwd: string) =>
+          Effect.promise(() =>
+            hook!(
+              {
+                hook_event_name: "CwdChanged",
+                session_id: WAKE_NATIVE_SESSION,
+                transcript_path: "/tmp/transcript.jsonl",
+                cwd: newCwd,
+                old_cwd: oldCwd,
+                new_cwd: newCwd,
+              } as Parameters<NonNullable<typeof hook>>[0],
+              undefined,
+              { signal: new AbortController().signal },
+            ),
+          );
+        yield* moveTo(worktree, repository);
+        // ExitWorktree(remove) deletes the checkout before the hook runs.
+        NodeChildProcess.execFileSync("git", ["worktree", "remove", "--force", worktree], {
+          cwd: repository,
+          stdio: "ignore",
+        });
+        assert.isFalse(NodeFS.existsSync(worktree));
+        yield* moveTo(repository, worktree);
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "cwd-removed-result", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const moves = harness.events.flatMap((event) =>
+          event.type === "provider_thread.workspace_moved" ? [event.checkoutPath] : [],
+        );
+        assert.deepEqual(moves, [worktree, repository]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+  });
+
+  describe("cost", () => {
+    const providerThreadCosts = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+      events.flatMap((event) =>
+        event.type === "provider_thread.updated" && event.providerThread.costUsd !== undefined
+          ? [event.providerThread.costUsd]
+          : [],
+      );
+
+    it.effect("adds each turn's share of Claude's running session cost to the thread", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const runTurn = (attempt: string, totalCostUsd: number) =>
+          Effect.gen(function* () {
+            yield* harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                // A stale snapshot without a cost must not reset the running total.
+                providerThread: harness.providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make(attempt),
+                text: "Work.",
+                attachments: [],
+              }),
+            );
+            yield* Queue.offer(
+              harness.sdkMessages,
+              makeResultFrame({ uuid: `${attempt}-result`, result: "Done.", totalCostUsd }),
+            );
+            yield* Queue.take(harness.terminalReceipts);
+          });
+        yield* runTurn("cost-attempt-1", 0.5);
+        assert.equal(providerThreadCosts(harness.events).at(-1), 0.5);
+        // Claude reports 1.25 so far this session, so the second turn cost 0.75.
+        yield* runTurn("cost-attempt-2", 1.25);
+        assert.equal(providerThreadCosts(harness.events).at(-1), 1.25);
+        // A zeroed crash result adds nothing.
+        yield* runTurn("cost-attempt-3", 0);
+        assert.equal(providerThreadCosts(harness.events).at(-1), 1.25);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("continues a cost already stored on the provider thread", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: { ...harness.providerThread, costUsd: 2 },
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("cost-resume-attempt"),
+            text: "Work.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "cost-resume-result", result: "Done.", totalCostUsd: 0.25 }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        assert.equal(providerThreadCosts(harness.events).at(-1), 2.25);
       }).pipe(
         Effect.scoped,
         Effect.provide(

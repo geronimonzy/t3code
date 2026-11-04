@@ -427,6 +427,20 @@ describe("deriveProviderSubagentStatus", () => {
   });
 });
 
+describe("presentPendingBackgroundWork", () => {
+  it("links a monitor to the tool call that started it", () => {
+    const toolCallItemId = TurnItemId.make("turn-item:monitor-call");
+    const presentation = presentPendingBackgroundWork([
+      { taskId: "watch", kind: "monitor", description: "Watch CI", toolCallItemId },
+      { taskId: "old", kind: "monitor", description: "Tail logs" },
+    ]);
+    expect(presentation?.items.map((item) => [item.label, item.toolCallItemId])).toEqual([
+      ["Watch CI", toolCallItemId],
+      ["Tail logs", undefined],
+    ]);
+  });
+});
+
 describe("provider-reported model selection", () => {
   const selected = v2Projection.thread.modelSelection;
   const reported = { ...selected, options: [{ id: "reasoningEffort", value: "default" }] };

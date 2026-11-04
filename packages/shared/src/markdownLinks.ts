@@ -185,9 +185,6 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
     isWindowsAbsolutePath(candidate);
   if (!hasExplicitPathShape) {
     const withoutPosition = candidate.replace(POSITION_SUFFIX_PATTERN, "");
-    // Markdown destinations accept `patches/`. Inline code still needs a
-    // file-shaped final segment, so a trailing slash stays plain code.
-    if (withoutPosition.endsWith("/")) return null;
     const firstSegment = withoutPosition.split("/")[0] ?? withoutPosition;
     if (looksLikeHostname(firstSegment, hasPosition)) return null;
     const basename =
@@ -196,6 +193,11 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
         .split(/[\\/]/)
         .at(-1) ?? "";
     if (VERSION_SUFFIX_PATTERN.test(basename)) return null;
+    // A trailing slash marks a folder, so it needs no extension; a file-shaped
+    // name before the slash (`src/main.ts/`) stays plain code.
+    if (withoutPosition.endsWith("/")) {
+      return hasPosition || FILE_EXTENSION_PATTERN.test(basename) ? null : candidate;
+    }
     if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basename)) return null;
   }
   return candidate;

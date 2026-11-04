@@ -1,5 +1,6 @@
 import { pipe } from "effect/Function";
 import type { AuthSessionState, EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -77,6 +78,29 @@ export const fetchEnvironmentSessionState = Effect.fn(
   return yield* request(input.timeoutMs ?? DEFAULT_SESSION_STATE_TIMEOUT_MS);
 });
 
+/**
+ * Keeps the last successful grant through transient fetch failures (network, proxy, 5xx,
+ * timeout). A rejected credential or `authenticated: false` revokes. The server still checks
+ * scopes when a command executes.
+ */
+export function retainLastGrant<E>(
+  result: AsyncResult.AsyncResult<AuthSessionState, E>,
+): AsyncResult.AsyncResult<AuthSessionState, E> {
+  if (!AsyncResult.isFailure(result)) return result;
+  const error = Cause.findErrorOption(result.cause);
+  if (Option.isSome(error) && isAuthRejection(error.value)) return result;
+  return Option.isSome(result.previousSuccess) ? result.previousSuccess.value : result;
+}
+
+function isAuthRejection(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "EnvironmentAuthInvalidError"
+  );
+}
+
 function makeEnvironmentSessionAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
 ) {
@@ -153,7 +177,7 @@ function makeEnvironmentSessionAtoms<R, E>(
     ),
   );
 
-  const sessionStateAtom = Atom.family((environmentId: EnvironmentId) => {
+  const rawSessionStateAtom = Atom.family((environmentId: EnvironmentId) => {
     let consecutiveFailures = 0;
     let backoffConnection: RpcSession | null = null;
     return runtime
@@ -205,9 +229,17 @@ function makeEnvironmentSessionAtoms<R, E>(
       .pipe(
         Atom.swr({ staleTime: 30_000, revalidateOnMount: true }),
         Atom.setIdleTTL(5 * 60_000),
-        Atom.withLabel(`environment-session-state:${environmentId}`),
+        Atom.withLabel(`environment-session-state-raw:${environmentId}`),
       );
   });
+
+  // Consumers see the last good grant through a transient failure; only a
+  // definitive answer (see `retainLastGrant`) replaces it.
+  const sessionStateAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => retainLastGrant(get(rawSessionStateAtom(environmentId)))).pipe(
+      Atom.withLabel(`environment-session-state:${environmentId}`),
+    ),
+  );
 
   const sessionStateValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(

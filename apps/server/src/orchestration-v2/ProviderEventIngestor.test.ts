@@ -1,10 +1,11 @@
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  EventId,
   MessageId,
   GitCommandError,
   type ModelSelection,
@@ -15,6 +16,7 @@ import {
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -44,6 +46,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
@@ -53,6 +56,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
+  cascadeTerminalizeRunOwnedSubagents,
   makeProviderEventRoutingState,
   type ProviderEventRouteIdentity,
   routeProviderEvent,
@@ -67,6 +71,8 @@ const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pip
 const layerTestEventSink = EventSink.layer.pipe(
   Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),
 );
+
+const layerTestProjectStore = ProjectStore.layer.pipe(Layer.provide(layerTestDatabase));
 
 const layerGit = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "ingestor-git-" })),
@@ -87,6 +93,7 @@ const makeLayerTest = <E>(
     layerTestStores,
     layerTestEventSink,
     IdAllocator.layer,
+    layerTestProjectStore,
     ThreadCommandExecutor.layer,
     layerGit,
     ProviderEventIngestor.layer.pipe(
@@ -96,6 +103,7 @@ const makeLayerTest = <E>(
           layerTestStores,
           ingestorEventSink,
           IdAllocator.layer,
+          layerTestProjectStore,
           ThreadCommandExecutor.layer,
           layerGit,
         ),
@@ -2271,6 +2279,369 @@ layer("ProviderEventIngestorV2", (it) => {
         ),
       ),
     ),
+  );
+
+  describe("provider_thread.workspace_moved", () => {
+    const setup = (workspaceRoot: string | null) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectStore = yield* ProjectStore.ProjectStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const rootEvent = yield* threadCreatedEvent(now);
+        if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+        const threadId = rootEvent.threadId;
+        if (workspaceRoot !== null) {
+          yield* projectStore.apply({
+            sequence: 0,
+            eventId: EventId.make("project-created"),
+            aggregateKind: "project",
+            aggregateId: rootEvent.payload.projectId,
+            occurredAt: DateTime.formatIso(now),
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "project.created",
+            payload: {
+              projectId: rootEvent.payload.projectId,
+              title: "Project",
+              workspaceRoot,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: DateTime.formatIso(now),
+              updatedAt: DateTime.formatIso(now),
+            },
+          });
+        }
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({ events: [rootEvent] });
+        const move = (checkoutPath: string, branch: string | null) =>
+          ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+            event: {
+              type: "provider_thread.workspace_moved",
+              driver: CODEX_DRIVER,
+              threadId,
+              checkoutPath,
+              branch,
+            },
+          });
+        const workspace = Effect.gen(function* () {
+          const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+          const thread = yield* projectionStore.getThread(threadId);
+          return { worktreePath: thread.worktreePath, branch: thread.branch };
+        });
+        return { move, workspace };
+      });
+
+    it.effect("moves the thread's workspace where its provider session moved itself", () =>
+      Effect.gen(function* () {
+        const { move, workspace } = yield* setup("/repo");
+
+        // Only the thread's metadata changes; its provider sessions stay attached.
+        const moved = yield* move("/repo/.claude/worktrees/feature", "feature");
+        assert.deepEqual(
+          moved.map((stored) => stored.event.type),
+          ["thread.metadata-updated"],
+        );
+        assert.deepEqual(yield* workspace, {
+          worktreePath: "/repo/.claude/worktrees/feature",
+          branch: "feature",
+        });
+        assert.deepEqual(yield* move("/repo/.claude/worktrees/feature", "feature"), []);
+
+        // Back in the project's own folder (a trailing slash does not matter).
+        yield* move("/repo/", "main");
+        assert.deepEqual(yield* workspace, { worktreePath: null, branch: "main" });
+      }),
+    );
+
+    it.effect("keeps a linked worktree as the workspace when the project is rooted in one", () =>
+      Effect.gen(function* () {
+        const { move, workspace } = yield* setup("/repo/.claude/worktrees/feature");
+
+        // The main checkout is not the project root here, so it is a worktree path.
+        yield* move("/repo", "main");
+        assert.deepEqual(yield* workspace, { worktreePath: "/repo", branch: "main" });
+
+        yield* move("/repo/.claude/worktrees/feature", "feature");
+        assert.deepEqual(yield* workspace, { worktreePath: null, branch: "feature" });
+      }),
+    );
+  });
+
+  // A native subagent whose launch run settled cancelled while the provider
+  // kept it: the launch run's cascade cancels its record and its thread's root.
+  const cancelledNativeSubagent = (key: string) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+      const parentThreadId = rootEvent.threadId;
+      const childThreadId = idAllocator.derive.threadFromProviderThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: `native-subagent:${key}`,
+      });
+      const launchRunId = RunId.make(`run:${key}:launch`);
+      const subagentId = NodeId.make(`node:${key}:subagent`);
+      const childRootId = NodeId.make(`node:${key}:thread-root`);
+      const providerThreadId = idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: `native-thread:${key}`,
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: parentThreadId,
+      });
+      const subagent: OrchestrationV2Subagent = {
+        id: subagentId,
+        threadId: parentThreadId,
+        runId: launchRunId,
+        parentNodeId: NodeId.make(`node:${key}:launch-root`),
+        origin: "provider_native",
+        createdBy: "agent",
+        driver: CODEX_DRIVER,
+        providerInstanceId: modelSelection.instanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Split the engine from the project.",
+        title: null,
+        model: null,
+        status: "running",
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      };
+      const childRoot = (
+        status: OrchestrationV2ExecutionNode["status"],
+      ): OrchestrationV2ExecutionNode => ({
+        id: childRootId,
+        threadId: childThreadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: childRootId,
+        kind: "root_turn",
+        status,
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+      });
+      const ingest = (runId: RunId, event: ProviderAdapter.ProviderAdapterV2Event) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: parentThreadId,
+          runId,
+          event,
+        });
+
+      yield* eventSink.write({ events: [rootEvent] });
+      yield* ingest(launchRunId, {
+        type: "app_thread.created",
+        driver: CODEX_DRIVER,
+        appThread: {
+          ...rootEvent.payload,
+          id: childThreadId,
+          title: "Engine/project split",
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId,
+            relationshipToParent: "subagent",
+            rootThreadId: parentThreadId,
+          },
+          forkedFrom: { type: "node", nodeId: subagentId },
+        },
+      });
+      yield* ingest(launchRunId, { type: "subagent.updated", driver: CODEX_DRIVER, subagent });
+      yield* ingest(launchRunId, {
+        type: "node.updated",
+        driver: CODEX_DRIVER,
+        node: childRoot("running"),
+      });
+      yield* eventSink.write({
+        events: yield* cascadeTerminalizeRunOwnedSubagents({
+          run: {
+            id: launchRunId,
+            threadId: parentThreadId,
+            providerInstanceId: modelSelection.instanceId,
+          } as OrchestrationV2Run,
+          open: {
+            subagents: new Map([[subagentId, subagent]]),
+            turnItems: new Map(),
+            childTurnItems: new Map(),
+            nodes: new Map([[childRootId, childRoot("running")]]),
+            linkedChildThreadIds: new Set([childThreadId]),
+          },
+          status: "cancelled",
+          completedAt: now,
+          allocateEventId: () => idAllocator.allocate.event({ threadId: parentThreadId }),
+        }),
+      });
+
+      // A later run follows only what the router hands it. The cancelled
+      // subagent is not one of its related threads at start.
+      const laterIdentity: ProviderEventRouteIdentity = {
+        threadId: parentThreadId,
+        runId: RunId.make(`run:${key}:later`),
+        attemptId: RunAttemptId.make(`attempt:${key}:later`),
+        providerThreadId,
+      };
+      let routing = makeProviderEventRoutingState({
+        identity: laterIdentity,
+        providerTurnId: null,
+      });
+      const deliverToLaterRun = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+        Effect.gen(function* () {
+          const [routed, next] = routeProviderEvent(event, laterIdentity, routing);
+          routing = next;
+          if (routed) yield* ingest(laterIdentity.runId, event);
+        });
+      const childNodeStatus = (nodeId: NodeId) =>
+        projectionStore
+          .getThreadRecords(childThreadId, ["nodes"])
+          .pipe(Effect.map(({ nodes }) => nodes.find((node) => node.id === nodeId)?.status));
+      const subagentStatus = projectionStore
+        .getThreadRecords(parentThreadId, ["subagents"])
+        .pipe(
+          Effect.map(
+            ({ subagents }) => subagents.find((candidate) => candidate.id === subagentId)?.status,
+          ),
+        );
+      assert.equal(yield* childNodeStatus(childRootId), "cancelled");
+      assert.equal(yield* subagentStatus, "cancelled");
+      return {
+        now,
+        subagent,
+        childRoot,
+        childThreadId,
+        childRootId,
+        laterRunId: laterIdentity.runId,
+        deliverToLaterRun,
+        childNodeStatus,
+        subagentStatus,
+        childTurnItemStatus: (itemId: TurnItemId) =>
+          projectionStore
+            .getThreadRecords(childThreadId, ["turnItems"])
+            .pipe(
+              Effect.map(({ turnItems }) => turnItems.find((item) => item.id === itemId)?.status),
+            ),
+      };
+    });
+
+  it.effect("returns a resumed native subagent's thread root to running, then to its outcome", () =>
+    Effect.gen(function* () {
+      const fixture = yield* cancelledNativeSubagent("resumed-native-subagent");
+      const { now, childThreadId, childRootId } = fixture;
+      const resumed = {
+        ...fixture.subagent,
+        runId: fixture.laterRunId,
+        startedAt: now,
+        updatedAt: now,
+      } satisfies OrchestrationV2Subagent;
+      // Adapter order: the re-attributed record first, then the child thread's.
+      yield* fixture.deliverToLaterRun({
+        type: "subagent.updated",
+        driver: CODEX_DRIVER,
+        subagent: resumed,
+      });
+      yield* fixture.deliverToLaterRun({
+        type: "node.updated",
+        driver: CODEX_DRIVER,
+        node: fixture.childRoot("running"),
+      });
+      // A call the subagent starts and never reports back on.
+      const callId = NodeId.make("node:resumed-native-subagent:call");
+      const callItemId = TurnItemId.make("turn-item:resumed-native-subagent:call");
+      yield* fixture.deliverToLaterRun({
+        type: "node.updated",
+        driver: CODEX_DRIVER,
+        node: {
+          ...fixture.childRoot("running"),
+          id: callId,
+          parentNodeId: childRootId,
+          kind: "tool_call",
+        },
+      });
+      yield* fixture.deliverToLaterRun({
+        type: "turn_item.updated",
+        driver: CODEX_DRIVER,
+        turnItem: {
+          id: callItemId,
+          threadId: childThreadId,
+          runId: null,
+          nodeId: callId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 101,
+          status: "running",
+          title: "Run the tests",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "command_execution",
+          input: "vp test run",
+        },
+      });
+      assert.equal(yield* fixture.subagentStatus, "running");
+      assert.equal(yield* fixture.childNodeStatus(childRootId), "running");
+      assert.equal(yield* fixture.childNodeStatus(callId), "running");
+
+      yield* fixture.deliverToLaterRun({
+        type: "subagent.updated",
+        driver: CODEX_DRIVER,
+        subagent: { ...resumed, status: "completed", result: "Done.", completedAt: now },
+      });
+      yield* fixture.deliverToLaterRun({
+        type: "node.updated",
+        driver: CODEX_DRIVER,
+        node: fixture.childRoot("completed"),
+      });
+      assert.equal(yield* fixture.subagentStatus, "completed");
+      assert.equal(yield* fixture.childNodeStatus(childRootId), "completed");
+      // Some providers keep background tools running past the turn; startup
+      // recovery, not the root's completion, ends calls nobody reports on.
+      assert.equal(yield* fixture.childNodeStatus(callId), "running");
+      assert.equal(yield* fixture.childTurnItemStatus(callItemId), "running");
+    }),
+  );
+
+  it.effect("keeps a stopped native subagent's thread root cancelled when it never resumes", () =>
+    Effect.gen(function* () {
+      const fixture = yield* cancelledNativeSubagent("stopped-native-subagent");
+      // Late reports still name the launch run: no later run takes them.
+      yield* fixture.deliverToLaterRun({
+        type: "subagent.updated",
+        driver: CODEX_DRIVER,
+        subagent: { ...fixture.subagent, status: "completed", completedAt: fixture.now },
+      });
+      yield* fixture.deliverToLaterRun({
+        type: "node.updated",
+        driver: CODEX_DRIVER,
+        node: fixture.childRoot("completed"),
+      });
+      assert.equal(yield* fixture.subagentStatus, "cancelled");
+      assert.equal(yield* fixture.childNodeStatus(fixture.childRootId), "cancelled");
+    }),
   );
 });
 

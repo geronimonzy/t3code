@@ -250,6 +250,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-guest: var(--guest);
   --color-guest-foreground: var(--guest-foreground);
   --color-guest-surface: var(--guest-surface);
+  /* Agent waiting on the user (subagent chips); the sidebar's indigo Input hue. */
+  --color-needs-input: var(--needs-input);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-ring: var(--ring);
   --color-input: var(--contrast-input);
@@ -359,6 +361,30 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       scale: 2;
     }
   }
+}
+
+/* Registered so 100cqw resolves where it is declared (against the timeline row),
+   not where the table reads it (against the chat-lane container). */
+@property --timeline-row-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+/* Pixel mascot sprite (src/mascot): steps a translate across a row of frames.
+   Per-element custom properties set the frame count, duration and loop count. */
+@keyframes mascot-sprite {
+  from {
+    translate: 0 0;
+  }
+  to {
+    translate: var(--mascot-end) 0;
+  }
+}
+
+@utility animate-mascot-sprite {
+  animation: mascot-sprite var(--mascot-duration) steps(var(--mascot-steps), jump-none)
+    var(--mascot-iterations) both;
 }
 
 @utility surface-glass {
@@ -956,8 +982,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     max-width: var(--chat-content-max-width);
   }
 
+  /* The row, not the lane, clips sideways so a wide table can grow past the lane.
+     The lane is the chat-lane container, so the row's children record the row width. */
   .messages-timeline-row-frame {
     padding-inline: 0;
+    overflow-x: clip;
+    container-type: inline-size;
+  }
+
+  .messages-timeline-row-frame > * {
+    --timeline-row-width: 100cqw;
   }
 
   .settings-slider {
@@ -1159,6 +1193,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --guest: var(--color-fuchsia-500);
   --guest-foreground: var(--color-fuchsia-600);
   --guest-surface: color-mix(in srgb, var(--guest) 14%, var(--message-surface));
+  --needs-input: var(--color-indigo-600);
   --success: var(--color-emerald-500);
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
@@ -1213,6 +1248,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --input: --alpha(var(--color-white) / 11%);
     --info-foreground: var(--color-blue-400);
     --guest-foreground: var(--color-fuchsia-300);
+    --needs-input: var(--color-indigo-300);
     --success-foreground: var(--color-emerald-400);
     --warning-foreground: var(--color-amber-400);
     --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
@@ -2140,6 +2176,15 @@ code {
   font-weight: 600;
 }
 
+/* Click-to-copy inline code: a copy cursor and a firmer border on hover. */
+.chat-markdown code[data-copyable-inline-code] {
+  cursor: copy;
+}
+
+.chat-markdown code[data-copyable-inline-code]:hover {
+  border-color: color-mix(in srgb, var(--contrast-foreground) 35%, var(--contrast-border));
+}
+
 .chat-markdown pre {
   max-width: 100%;
   overflow-x: auto;
@@ -2257,6 +2302,17 @@ code {
 
 .chat-markdown tbody td {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
+}
+
+/* In the timeline, a table wider than the lane grows outward, centred on it, up to
+   the row's width less a gutter, and only scrolls beyond that. */
+.messages-timeline-row-frame .chat-markdown .chat-markdown-table-container {
+  position: relative;
+  left: 50%;
+  translate: -50% 0;
+  width: max-content;
+  min-width: 100%;
+  max-width: calc(var(--timeline-row-width) - 2rem);
 }
 
 /* Caps a long path, URL, or chip at 24rem; text past the cap wraps. */

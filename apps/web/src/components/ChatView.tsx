@@ -272,11 +272,13 @@ import { useCitedHistory } from "./chat/citationProcedure";
 import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
+import type { WorkEntryRevealRequest } from "./chat/useWorkEntryReveal";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
+import { useIsCompactEmbed } from "../embedMode";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -289,6 +291,9 @@ import {
 } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
+import { deriveThreadUsageSummary } from "./chat/ThreadUsageSection.logic";
+import { ComposerSubagentStrip, useComposerSubagentStrip } from "./chat/ComposerSubagentStrip";
+import { useMascotsPreference } from "../mascot/mascotPreferences";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   resolveEffectiveEnvMode,
@@ -1057,7 +1062,10 @@ export default function ChatView(props: ChatViewProps) {
   );
   const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
   const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
-  const rightPanelOpen = rightPanelState.isOpen;
+  const compactEmbed = useIsCompactEmbed();
+  // Compact embed shows no side panels; treating them as closed also keeps a
+  // persisted maximized panel from collapsing the chat column.
+  const rightPanelOpen = rightPanelState.isOpen && !compactEmbed;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const rightPanelPresenceValue = {
@@ -1457,6 +1465,11 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadLiveTokenUsage,
     activeProviderThread,
   );
+  const threadUsage = deriveThreadUsageSummary({
+    subagentUsage: serverThread?.subagentUsage,
+    context: activeContextWindow,
+    costUsd: activeProviderThread?.costUsd ?? null,
+  });
   const pendingBackgroundTasks = deriveThreadPendingBackgroundTasks(serverProjection);
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
@@ -2385,6 +2398,10 @@ export default function ChatView(props: ChatViewProps) {
     closeRightPanelSurface,
   });
   const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
+  // The background work row names a monitor; its name jumps to the tool call that started it.
+  const [toolCallReveal, setToolCallReveal] = useState<WorkEntryRevealRequest | null>(null);
+  const revealToolCall = (entryId: string) =>
+    setToolCallReveal((previous) => ({ entryId, key: (previous?.key ?? 0) + 1 }));
   const {
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,
@@ -2420,6 +2437,7 @@ export default function ChatView(props: ChatViewProps) {
     isWorking,
     pendingBackgroundTasks,
     turnItems: serverProjection?.turnItems ?? EMPTY_TURN_ITEMS,
+    onRevealToolCall: revealToolCall,
     activePendingApproval,
     activePendingUserInput,
     localCheckoutBranchMismatch,
@@ -2554,6 +2572,21 @@ export default function ChatView(props: ChatViewProps) {
           },
         })
       : null;
+  const [subagentMascots] = useMascotsPreference();
+  const { strip: subagentStrip, dismiss: dismissSubagentChip } = useComposerSubagentStrip(
+    serverProjection,
+    `${environmentId}:${activeThreadId}`,
+  );
+  // Its own row under the banner stack: live progress must never hide behind a notice.
+  const subagentStripContent =
+    subagentStrip === null ? null : (
+      <ComposerSubagentStrip
+        strip={subagentStrip}
+        mascots={subagentMascots}
+        onOpenThread={onOpenRelatedThreadStable}
+        onDismiss={dismissSubagentChip}
+      />
+    );
   const composerBannerItems = (() => {
     const fallbackSelection = draftFallback?.selection;
     const defaultSelection =
@@ -3299,7 +3332,7 @@ export default function ChatView(props: ChatViewProps) {
         data-chat-column
         inert={rightPanelMaximized}
       >
-        {embedded ? null : (
+        {embedded || compactEmbed ? null : (
           <header
             ref={threadPanelPopoverAnchorRef}
             data-chat-header
@@ -3400,6 +3433,7 @@ export default function ChatView(props: ChatViewProps) {
                   syncing={threadSyncPhase !== null}
                   detailLoading={threadDetailLoading}
                   citationRequest={citationRequest}
+                  toolCallReveal={toolCallReveal}
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}
                   {...(activeProject
@@ -3636,6 +3670,7 @@ export default function ChatView(props: ChatViewProps) {
                                   ? EMPTY_COMPOSER_BANNER_ITEMS
                                   : composerBannerItems
                               }
+                              subagentStrip={isDraftHeroState ? null : subagentStripContent}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}
                               onToggleKeepFullHistory={toggleKeepFullHistoryStable}
@@ -3906,8 +3941,10 @@ export default function ChatView(props: ChatViewProps) {
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,
                     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
-                    contextWindow: activeContextWindow,
+                    // A Claude subagent's child thread reports its own context, not the parent's.
+                    contextWindow: threadUsage.context,
                   }}
+                  threadUsage={threadUsage}
                 />
 
                 <PullRequestThreadDialogHost

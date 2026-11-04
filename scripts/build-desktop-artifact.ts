@@ -2939,6 +2939,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       differentialPackage: true,
       include: "apps/desktop/resources/installer.nsh",
     };
+    // electron-builder has no Windows protocols key. The top-level one makes NSIS write and
+    // remove the t3code:// registry entries. Dev builds register t3code-dev at runtime.
+    buildConfig.protocols = [{ name: "T3 Code", schemes: ["t3code"] }];
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",

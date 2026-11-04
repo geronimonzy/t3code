@@ -53,6 +53,7 @@ import {
 } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
+  GitBranchIcon,
   ArrowLeftIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
@@ -139,6 +140,8 @@ import {
   waitForProject,
 } from "../state/entities";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
+import { usePaginatedBranches } from "../state/queries";
+import { ownedWorktreePaths } from "./BranchToolbar.logic";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -177,6 +180,7 @@ import {
   resolveWslProjectSelection,
 } from "../wslPaths";
 import {
+  commandPaletteWorktreeTargets,
   resolveCommandPaletteProject,
   ADDON_ICON_CLASS,
   browseInputEndPaddingClass,
@@ -498,6 +502,27 @@ function OpenCommandPaletteDialog(props: {
   };
   // Side chats and subagents open inside their parent, so opening a project never lands on one.
   const threads = useVisibleThreadShells().filter((thread) => !isSidebarHiddenThread(thread));
+  // The current project's other worktrees, for "New thread in worktree...".
+  const worktreeProject =
+    defaultProjectRef === null
+      ? null
+      : (projects.find(
+          (project) =>
+            project.environmentId === defaultProjectRef.environmentId &&
+            project.id === defaultProjectRef.projectId,
+        ) ?? null);
+  const worktreeRefs = usePaginatedBranches({
+    environmentId: worktreeProject?.environmentId ?? null,
+    cwd: worktreeProject?.workspaceRoot ?? null,
+  }).data?.refs;
+  const worktreeTargets =
+    worktreeProject && worktreeRefs
+      ? commandPaletteWorktreeTargets(
+          worktreeRefs,
+          worktreeProject.workspaceRoot,
+          ownedWorktreePaths(threads, worktreeProject.environmentId),
+        )
+      : [];
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
@@ -1268,6 +1293,42 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: NEW_THREAD_IN_GROUP, label: "Projects", items: projectThreadItems }],
     });
+
+    if (worktreeProject && worktreeTargets.length > 0) {
+      const projectRef = scopeProjectRef(worktreeProject.environmentId, worktreeProject.id);
+      actionItems.push({
+        kind: "submenu",
+        value: "action:new-thread-in-worktree",
+        searchTerms: ["new thread", "worktree", "branch", "adopt"],
+        title: "New thread in worktree...",
+        icon: <GitBranchIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <GitBranchIcon className={ADDON_ICON_CLASS} />,
+        groups: [
+          {
+            value: "worktrees",
+            label: `Worktrees of ${worktreeProject.title}`,
+            items: worktreeTargets.map((target) => ({
+              kind: "action" as const,
+              value: `new-thread-in-worktree:${target.worktreePath}`,
+              searchTerms: [target.branch, target.worktreePath],
+              title: target.branch,
+              description: target.hasThread
+                ? target.worktreePath
+                : `No thread · ${target.worktreePath}`,
+              icon: <GitBranchIcon className={ITEM_ICON_CLASS} />,
+              run: async () => {
+                await handleNewThread(projectRef, {
+                  branch: target.branch,
+                  worktreePath: target.worktreePath,
+                  envMode: "worktree",
+                  startFromOrigin: false,
+                });
+              },
+            })),
+          },
+        ],
+      });
+    }
   }
 
   if (scratchTargetEnvironmentId !== null) {

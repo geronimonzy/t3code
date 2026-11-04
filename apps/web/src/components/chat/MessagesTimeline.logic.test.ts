@@ -30,9 +30,96 @@ import {
   deriveMessagesTimelineRowsWithState,
   shouldCollapseUserMessage,
   resolveAssistantMessageCopyState,
+  resolveWorkEntryReveal,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
+
+describe("resolveWorkEntryReveal", () => {
+  const runId = RunId.make("turn-1");
+  const message = (id: string, role: "user" | "assistant", at: string, text: string) => ({
+    id,
+    kind: "message" as const,
+    createdAt: at,
+    message: {
+      id: id as never,
+      role,
+      text,
+      runId: role === "user" ? null : runId,
+      createdAt: at,
+      updatedAt: at,
+      streaming: false,
+    },
+  });
+  const work = (id: string, at: string) => ({
+    id,
+    kind: "work" as const,
+    createdAt: at,
+    entry: { id, createdAt: at, runId, label: `Ran ${id}`, tone: "tool" as const },
+  });
+  // A settled turn: its tool calls hide in the turn fold, then in one tool group.
+  const timelineEntries: TimelineEntry[] = [
+    message("user", "user", "2026-01-01T00:00:00Z", "Watch the build"),
+    message("assistant-first", "assistant", "2026-01-01T00:00:01Z", "Starting a monitor."),
+    work("call-1", "2026-01-01T00:00:02Z"),
+    work("monitor-call", "2026-01-01T00:00:03Z"),
+    work("call-3", "2026-01-01T00:00:04Z"),
+    message("assistant-final", "assistant", "2026-01-01T00:00:05Z", "Watching."),
+  ];
+
+  it("opens the turn and the tool group, then scrolls to the row holding the call", () => {
+    const expandedRunIds = new Set<RunId>();
+    const expandedWorkGroupIds = new Set<string>();
+    const foldRunIds = timelineTurnFoldRunIdsByEntryId({ timelineEntries, isWorking: false });
+    const steps: string[] = [];
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries,
+        expandedRunIds,
+        expandedWorkGroupIds,
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      const step = resolveWorkEntryReveal({
+        entryId: "monitor-call",
+        timelineEntries,
+        rows,
+        foldRunIds,
+      });
+      steps.push(step.kind);
+      if (step.kind === "expand-run") expandedRunIds.add(step.runId);
+      else if (step.kind === "expand-group") expandedWorkGroupIds.add(step.groupId);
+      else {
+        const row = step.kind === "scroll" ? rows[step.rowIndex] : undefined;
+        expect(
+          row?.kind === "work" && row.groupedEntries.some((entry) => entry.id === "monitor-call"),
+        ).toBe(true);
+        break;
+      }
+    }
+    expect(steps).toEqual(["expand-run", "expand-group", "scroll"]);
+  });
+
+  it("reports a call that is not in the loaded timeline", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(
+      resolveWorkEntryReveal({
+        entryId: "older-call",
+        timelineEntries,
+        rows,
+        foldRunIds: new Map(),
+      }),
+    ).toEqual({ kind: "missing" });
+  });
+});
 
 describe("resolveAssistantMessageCopyState", () => {
   it("copies the rendered representation of Codex directives", () => {

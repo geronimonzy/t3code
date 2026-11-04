@@ -25,6 +25,7 @@ import {
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { memo, use, useState, type KeyboardEvent } from "react";
+import { useWorkEntryRevealKey } from "./useWorkEntryReveal";
 import {
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
@@ -186,18 +187,25 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? notificationChildThreadId(workEntry.projectedItem.item.source)
       : undefined;
   const groupView = use(WorkGroupViewCtx);
-  const [expanded, setExpanded] = useState(
-    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
+  // Standalone rows keep their disclosure in the timeline's state too, so a
+  // revealed call stays open when it scrolls out of view and back.
+  const expandedEntries = (groupView?.state ?? ctx.workGroupViewState).expandedEntries;
+  const [expanded, setExpanded] = useState(() => expandedEntries.has(workEntry.id));
+  const revealKey = useWorkEntryRevealKey(
+    ctx.workEntryReveals,
+    (entryId) => entryId === workEntry.id,
   );
+  const [seenRevealKey, setSeenRevealKey] = useState(revealKey);
+  if (revealKey !== seenRevealKey) {
+    setSeenRevealKey(revealKey);
+    if (revealKey !== null) setExpanded(true);
+  }
   const toggleExpanded = () => {
     const next = !expanded;
-    if (groupView) {
-      groupView.onToggleEntry(!next);
-      if (next) groupView.state.expandedEntries.add(workEntry.id);
-      else groupView.state.expandedEntries.delete(workEntry.id);
-    } else {
-      props.onToggleEntry?.(!next);
-    }
+    if (groupView) groupView.onToggleEntry(!next);
+    else props.onToggleEntry?.(!next);
+    if (next) expandedEntries.add(workEntry.id);
+    else expandedEntries.delete(workEntry.id);
     setExpanded(next);
   };
   const failureItem = workEntry.projectedItem?.item;

@@ -89,6 +89,11 @@ import {
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
+import {
+  createWorkEntryRevealStore,
+  useWorkEntryReveal,
+  type WorkEntryRevealRequest,
+} from "./useWorkEntryReveal";
 import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
@@ -219,6 +224,8 @@ interface MessagesTimelineProps {
   onRespondToApproval?: TimelineRowSharedState["onRespondToApproval"];
   citationRequest?: AssistantCitationRequest | null;
   citationHistory?: CitedHistory;
+  /** Scrolls to a tool call row and expands it, such as the one that started a monitor. */
+  toolCallReveal?: WorkEntryRevealRequest | null;
   onCiteAssistantText?: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -335,6 +342,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onRespondToApproval,
   citationRequest = null,
   citationHistory = CITED_HISTORY_LOADING,
+  toolCallReveal = null,
   onCiteAssistantText,
   isWorking,
   runlessWorkActive = false,
@@ -462,6 +470,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }
   const citationThreadRef = parseScopedThreadKey(routeThreadKey);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
+  const [workEntryReveals] = useState(createWorkEntryRevealStore);
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
@@ -772,6 +781,34 @@ const ConversationTimeline = memo(function ConversationTimeline({
     viewport: timelineViewportElement,
     onManualNavigation: navigateTimeline,
   });
+  useWorkEntryReveal({
+    request: toolCallReveal,
+    entries: timelineEntries,
+    rows,
+    foldRunIds: () =>
+      timelineTurnFoldRunIdsByEntryId({
+        timelineEntries,
+        latestRun,
+        runningRunId,
+        isWorking,
+        runlessWorkActive,
+      }),
+    listRef,
+    store: workEntryReveals,
+    workGroupState: workGroupViewState,
+    animated: !prefersReducedMotion,
+    onExpandRun: (runId) =>
+      setExpandedRunIds((current) => (current.has(runId) ? current : new Set(current).add(runId))),
+    onExpandAttempt: (attemptId) =>
+      setExpandedAttemptIds((current) =>
+        current.has(attemptId) ? current : new Set(current).add(attemptId),
+      ),
+    onExpandGroup: (groupId) =>
+      setExpandedWorkGroupIds((current) =>
+        current.has(groupId) ? current : new Set(current).add(groupId),
+      ),
+    onManualNavigation: navigateTimeline,
+  });
   const [findListReady, setFindListReady] = useState(false);
   const handleListLoad = () => {
     onCitationListLoad();
@@ -1049,6 +1086,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
     onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
     workGroupViewState,
+    workEntryReveals,
   };
   const compactionAwaitingRow =
     isCompacting &&
@@ -1225,11 +1263,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
         onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
       >
-        <div
-          ref={observeLaneWidth}
-          className="chat-content-lane overflow-x-clip"
-          data-timeline-root="true"
-        >
+        {/* The row frame, not the lane, clips sideways so a wide table can grow past the lane. */}
+        <div ref={observeLaneWidth} className="chat-content-lane" data-timeline-root="true">
           <AudioPreviewUnmountContext value={onAudioUnmount}>
             <TimelineRowContent row={item} />
           </AudioPreviewUnmountContext>

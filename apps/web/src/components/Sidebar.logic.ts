@@ -21,8 +21,11 @@ import {
   isListedThreadLineage,
   type ContextMenuItem,
   type EnvironmentId,
+  type OrchestrationV2Subagent,
+  type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { isActiveSubagentStatus } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import {
@@ -37,6 +40,13 @@ import {
   type ThreadSortInput,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { SidebarThreadSummary, Thread } from "../types";
+import {
+  subagentChipState,
+  subagentWorktreeBranch,
+  type SubagentLifecycle,
+  type SubagentStripChipState,
+} from "./chat/ComposerSubagentStrip.logic";
+import type { MascotState } from "../mascot/mascotAnimations";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { observeIntersection } from "../lib/observeIntersection";
@@ -1368,4 +1378,133 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
+}
+
+type SidebarSubagentChildInput = Pick<
+  SidebarThreadSummary,
+  | "id"
+  | "environmentId"
+  | "title"
+  | "lineage"
+  | "archivedAt"
+  | "createdAt"
+  | "branch"
+  | "worktreePath"
+  | "modelSelection"
+> & {
+  readonly subagentStatus?: OrchestrationV2Subagent["status"] | null | undefined;
+};
+
+export interface SidebarSubagentRow {
+  readonly key: string;
+  readonly threadRef: ScopedThreadRef;
+  readonly title: string;
+  readonly state: SubagentStripChipState;
+  /** The child's branch when it works in a different worktree than its parent. */
+  readonly worktreeBranch: string | null;
+  /** Picks the child's mascot. */
+  readonly providerInstanceId: string;
+}
+
+/** Child threads whose status the sidebar can track, keyed for linger tracking. */
+export function sidebarSubagentLifecycles(
+  threads: ReadonlyArray<SidebarSubagentChildInput>,
+): ReadonlyArray<SubagentLifecycle> {
+  return threads.flatMap((thread) =>
+    thread.lineage.relationshipToParent === "subagent" &&
+    thread.subagentStatus != null &&
+    thread.archivedAt === null
+      ? [
+          {
+            id: scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+            status: thread.subagentStatus,
+          },
+        ]
+      : [],
+  );
+}
+
+/**
+ * Subagent child threads to nest under their parent row: working ones plus
+ * recently finished ones, oldest first. Parents without any are absent.
+ */
+export function deriveSidebarSubagentRows(
+  threads: ReadonlyArray<SidebarSubagentChildInput>,
+  lingeringKeys: ReadonlySet<string>,
+): ReadonlyMap<string, ReadonlyArray<SidebarSubagentRow>> {
+  const byParent = new Map<string, Array<SidebarSubagentRow & { readonly createdAt: string }>>();
+  const worktreeByThreadKey = new Map(
+    threads.map((thread) => [
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      thread.worktreePath,
+    ]),
+  );
+  for (const thread of threads) {
+    const parentThreadId = thread.lineage.parentThreadId;
+    const status = thread.subagentStatus;
+    if (
+      thread.lineage.relationshipToParent !== "subagent" ||
+      parentThreadId === null ||
+      status == null ||
+      thread.archivedAt !== null
+    ) {
+      continue;
+    }
+    const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+    const key = scopedThreadKey(threadRef);
+    const working = isActiveSubagentStatus(status);
+    if (!working && !lingeringKeys.has(key)) continue;
+    const parentKey = scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId));
+    const rows = byParent.get(parentKey) ?? [];
+    const parentWorktree = worktreeByThreadKey.get(parentKey) ?? null;
+    rows.push({
+      key,
+      threadRef,
+      title: thread.title,
+      state: subagentChipState(status),
+      worktreeBranch:
+        thread.worktreePath !== null && thread.worktreePath !== parentWorktree
+          ? subagentWorktreeBranch({ path: thread.worktreePath, branch: thread.branch })
+          : null,
+      providerInstanceId: thread.modelSelection.instanceId,
+      createdAt: thread.createdAt,
+    });
+    byParent.set(parentKey, rows);
+  }
+  return new Map(
+    [...byParent].map(([parentKey, rows]) => [
+      parentKey,
+      rows
+        .toSorted(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) || left.key.localeCompare(right.key),
+        )
+        .map(({ createdAt: _createdAt, ...row }) => row),
+    ]),
+  );
+}
+
+/**
+ * Which mascot a thread row shows for its status, or null to keep the icon.
+ * Failure, limits, wakes and guest requests keep their icons: those need attention, not a mascot.
+ */
+export function sidebarThreadMascotState(
+  status: SidebarThreadStatus,
+  icon:
+    | "working"
+    | "waiting"
+    | "input"
+    | "request"
+    | "approval"
+    | "failed"
+    | "done"
+    | "woke"
+    | null,
+): MascotState | null {
+  if (icon === "working") return "working";
+  if (icon === "input" || icon === "approval") return "input";
+  if (icon === "done") return "done";
+  // Waiting on background work reads as a calm, idle mascot.
+  if (icon === "waiting" || status === "waiting") return "idle";
+  return null;
 }

@@ -904,3 +904,34 @@ export function newThreadNoProjectIndex(
   const pinnedCount = projects.filter((entry) => entry.pinned).length;
   return Math.min(pinnedCount + 1, projects.length);
 }
+
+export interface CommandPaletteWorktreeTarget {
+  readonly branch: string;
+  readonly worktreePath: string;
+  readonly hasThread: boolean;
+}
+
+/** The project's other worktrees a new thread could start in; those without a thread come first. */
+export function commandPaletteWorktreeTargets(
+  refs: ReadonlyArray<{
+    readonly name: string;
+    readonly isRemote?: boolean | undefined;
+    readonly worktreePath: string | null;
+  }>,
+  projectCwd: string,
+  ownedWorktreePaths: ReadonlySet<string>,
+): ReadonlyArray<CommandPaletteWorktreeTarget> {
+  return refs
+    .flatMap((ref) =>
+      ref.isRemote === true || ref.worktreePath === null || ref.worktreePath === projectCwd
+        ? []
+        : [
+            {
+              branch: ref.name,
+              worktreePath: ref.worktreePath,
+              hasThread: ownedWorktreePaths.has(ref.worktreePath),
+            },
+          ],
+    )
+    .toSorted((left, right) => Number(left.hasThread) - Number(right.hasThread));
+}

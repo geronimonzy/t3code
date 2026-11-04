@@ -2,6 +2,7 @@ import { type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
+  ownedWorktreePaths,
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchSelectionTarget,
   resolveDraftEnvModeAfterBranchChange,
@@ -11,6 +12,21 @@ import {
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
+
+describe("ownedWorktreePaths", () => {
+  it("collects worktrees that a live thread in the environment works in", () => {
+    const owned = ownedWorktreePaths(
+      [
+        { environmentId: "local", worktreePath: "/repo-a", archivedAt: null },
+        { environmentId: "local", worktreePath: "/repo-b", archivedAt: "2026-10-01T00:00:00Z" },
+        { environmentId: "remote", worktreePath: "/repo-c", archivedAt: null },
+        { environmentId: "local", worktreePath: null, archivedAt: null },
+      ],
+      "local",
+    );
+    expect([...owned]).toEqual(["/repo-a"]);
+  });
+});
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
   it("switches to local mode when returning from an existing worktree to the main worktree", () => {

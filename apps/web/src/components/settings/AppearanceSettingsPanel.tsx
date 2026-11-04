@@ -36,6 +36,8 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
+import { useMascotsPreference } from "../../mascot/mascotPreferences";
+import { MascotAnimationPicker } from "./MascotAnimationPicker";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -97,6 +99,7 @@ export function AppearanceSettingsPanel() {
   } = useTheme();
   const customThemes = useCustomThemes();
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
+  const [subagentMascots, setSubagentMascots] = useMascotsPreference();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const environmentStageLabel = useEnvironmentStageLabel();
@@ -256,6 +259,41 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+
+        <SettingsRow
+          {...searchableSetting("subagent-mascots")}
+          description="Show agent status as tiny pixel Claudes: thread rows, subagents in the sidebar, and the strip above the composer."
+          resetAction={
+            !subagentMascots ? (
+              <SettingResetButton
+                label="subagent mascots"
+                onClick={() => setSubagentMascots(true)}
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={subagentMascots}
+              onCheckedChange={(checked) => setSubagentMascots(Boolean(checked))}
+              aria-label="Show agents as pixel mascots"
+            />
+          }
+        />
+
+        {subagentMascots ? (
+          <>
+            <SettingsRow
+              {...searchableSetting("mascot-animations")}
+              description="Claude's animation for each state. Click a preview to replay it."
+              control={<MascotAnimationPicker character="claude" />}
+            />
+            <SettingsRow
+              {...searchableSetting("codex-mascot-animations")}
+              description="Codex's animation for each state. Click a preview to replay it."
+              control={<MascotAnimationPicker character="codex" />}
+            />
+          </>
+        ) : null}
 
         <SettingsRow
           {...searchableSetting("chat-width")}

@@ -182,6 +182,9 @@ import {
   filterSidebarV2VisibleThreads,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
+  deriveSidebarSubagentRows,
+  sidebarSubagentLifecycles,
+  type SidebarSubagentRow,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
@@ -221,6 +224,8 @@ import {
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
 import { SidebarPointerSensor } from "./Sidebar.pointer";
+import { useLingeringSubagentIds } from "../hooks/useLingeringSubagentIds";
+import { useMascotsPreference } from "../mascot/mascotPreferences";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import {
   pickSnoozePreset,
@@ -325,6 +330,7 @@ const sidebarProviderEntriesAtom = Atom.make((get) => {
 
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, SidebarProviderEntry> = new Map();
 const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
+const EMPTY_SUBAGENT_ROWS: ReadonlyArray<SidebarSubagentRow> = [];
 
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
@@ -410,6 +416,13 @@ function routeThreadOnly(
   if (routeThreadKey === null) return EMPTY_THREADS;
   const routeThread = threads.find((thread) => threadShellKey(thread) === routeThreadKey);
   return routeThread === undefined ? EMPTY_THREADS : [routeThread];
+}
+
+/** Live subagents to nest under each parent row, keyed by the parent; finished ones linger briefly. */
+function useSidebarSubagentRows() {
+  const threads = useQuietThreadShells();
+  const lingeringKeys = useLingeringSubagentIds(sidebarSubagentLifecycles(threads), "sidebar");
+  return deriveSidebarSubagentRows(threads, lingeringKeys);
 }
 
 // Separate hooks cache maps independently of later Sidebar hooks and preserve dnd-kit inputs.
@@ -925,6 +938,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectScopeItems: lookupProjectScopeItems,
   } = useSidebarLookups();
   const delegatedUnderParent = useDelegatedUnderParent();
+  const [subagentMascots] = useMascotsPreference();
+  const subagentRowsByParentKey = useSidebarSubagentRows();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -3422,6 +3437,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             onUnpin={attemptUnpin}
                             onAcknowledgeWoke={acknowledgeWoke}
                             onFileDropThreads={handleThreadFileDrop}
+                            subagentRows={
+                              subagentRowsByParentKey.get(threadKey) ?? EMPTY_SUBAGENT_ROWS
+                            }
+                            subagentMascots={subagentMascots}
                           />
                         );
                       };

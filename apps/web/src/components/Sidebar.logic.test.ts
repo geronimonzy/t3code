@@ -36,6 +36,9 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  deriveSidebarSubagentRows,
+  sidebarSubagentLifecycles,
+  sidebarThreadMascotState,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -1655,5 +1658,100 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  });
+});
+
+describe("deriveSidebarSubagentRows", () => {
+  const environmentId = EnvironmentId.make("environment-local");
+  const parentId = ThreadId.make("thread-parent");
+  const child = (
+    id: string,
+    subagentStatus: "running" | "completed" | "failed" | null,
+    createdAt: string,
+  ) => ({
+    ...makeThreadFixture({
+      id: ThreadId.make(id),
+      environmentId,
+      title: `Agent ${id}`,
+      createdAt,
+      lineage: {
+        rootThreadId: parentId,
+        parentThreadId: parentId,
+        relationshipToParent: "subagent",
+      },
+    }),
+    subagentStatus,
+  });
+  const parentKey = `${environmentId}:${parentId}`;
+
+  it("nests working child threads under their parent, oldest first", () => {
+    const rows = deriveSidebarSubagentRows(
+      [
+        child("b", "running", "2026-10-08T00:00:02.000Z"),
+        child("a", "running", "2026-10-08T00:00:01.000Z"),
+        makeThreadFixture({ id: parentId, environmentId }),
+      ],
+      new Set(),
+    );
+    expect(rows.get(parentKey)?.map((row) => [row.title, row.state])).toEqual([
+      ["Agent a", "working"],
+      ["Agent b", "working"],
+    ]);
+    expect(rows.size).toBe(1);
+  });
+
+  it("shows a child's branch only when it works in a different worktree than its parent", () => {
+    const rows = deriveSidebarSubagentRows(
+      [
+        {
+          ...child("a", "running", "2026-10-08T00:00:01.000Z"),
+          branch: "worktree-agent-a",
+          worktreePath: "/repo/.claude/worktrees/agent-a",
+        },
+        { ...child("b", "running", "2026-10-08T00:00:02.000Z"), worktreePath: "/repo-feature" },
+        makeThreadFixture({ id: parentId, environmentId, worktreePath: "/repo-feature" }),
+      ],
+      new Set(),
+    );
+    expect(rows.get(parentKey)?.map((row) => row.worktreeBranch)).toEqual([
+      "worktree-agent-a",
+      null,
+    ]);
+  });
+
+  it("keeps a finished child only while it lingers, with its outcome", () => {
+    const threads = [
+      child("a", "completed", "2026-10-08T00:00:01.000Z"),
+      child("b", "failed", "2026-10-08T00:00:02.000Z"),
+    ];
+    expect(deriveSidebarSubagentRows(threads, new Set()).size).toBe(0);
+    const rows = deriveSidebarSubagentRows(threads, new Set([`${environmentId}:b`]));
+    expect(rows.get(parentKey)?.map((row) => row.state)).toEqual(["failed"]);
+  });
+
+  it("ignores child threads whose server reports no subagent status", () => {
+    const threads = [child("a", null, "2026-10-08T00:00:01.000Z")];
+    expect(deriveSidebarSubagentRows(threads, new Set()).size).toBe(0);
+    expect(sidebarSubagentLifecycles(threads)).toEqual([]);
+  });
+
+  it("tracks child lifecycles under the same keys the rows use", () => {
+    expect(sidebarSubagentLifecycles([child("a", "running", "2026-10-08T00:00:01.000Z")])).toEqual([
+      { id: `${environmentId}:a`, status: "running" },
+    ]);
+  });
+});
+
+describe("sidebarThreadMascotState", () => {
+  it("maps live statuses to mascots and keeps icons for statuses that need attention", () => {
+    expect(sidebarThreadMascotState("working", "working")).toBe("working");
+    expect(sidebarThreadMascotState("approval", "approval")).toBe("input");
+    expect(sidebarThreadMascotState("input", "input")).toBe("input");
+    expect(sidebarThreadMascotState("ready", "done")).toBe("done");
+    expect(sidebarThreadMascotState("waiting", "waiting")).toBe("idle");
+    expect(sidebarThreadMascotState("request", "request")).toBeNull();
+    expect(sidebarThreadMascotState("failed", "failed")).toBeNull();
+    expect(sidebarThreadMascotState("ready", "woke")).toBeNull();
+    expect(sidebarThreadMascotState("ready", null)).toBeNull();
   });
 });

@@ -178,6 +178,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { showAnchoredCopyErrorToast, showAnchoredCopySuccessToast } from "./ui/anchoredCopyToast";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import {
   isBrowserPreviewFile,
@@ -964,6 +965,30 @@ function selectInlineCode(event: ReactMouseEvent<HTMLElement>) {
   window.getSelection()?.selectAllChildren(event.currentTarget);
 }
 
+/** Inline code that copies its text on a plain click; a drag that selected text is left alone. */
+function CopyableInlineCode({ children, ...props }: ComponentProps<"code">) {
+  const ref = useRef<HTMLElement | null>(null);
+  return (
+    <code
+      {...props}
+      ref={ref}
+      data-copyable-inline-code=""
+      onClick={(event) => {
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed) return;
+        void writeTextToClipboard(event.currentTarget.textContent ?? "", "inline code").then(
+          (didCopy) => {
+            if (didCopy) showAnchoredCopySuccessToast(ref);
+          },
+          (error: Error) => showAnchoredCopyErrorToast(ref, error),
+        );
+      }}
+    >
+      {children}
+    </code>
+  );
+}
+
 const CHAT_MARKDOWN_COMPONENTS = {
   h1: markdownHeadingRenderer(1),
   h2: markdownHeadingRenderer(2),
@@ -1335,6 +1360,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   code: function MarkdownCode({ node, children, className, ...props }) {
     const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip, mathEnabled, inline } =
       use(ChatMarkdownRendererContext);
+    const insideLink = use(MarkdownLinkContext);
     const math = mathEnabled ? mathKind(className) : null;
     if (math) {
       return (
@@ -1355,6 +1381,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
           fileLinkMeta,
           `\`${codeText}\``,
           inlineCodeFilePathCandidate(codeText) ?? codeText.trim(),
+        );
+      }
+      if (!insideLink) {
+        return (
+          <CopyableInlineCode {...props} className={className} onDoubleClick={selectInlineCode}>
+            {children}
+          </CopyableInlineCode>
         );
       }
       return (

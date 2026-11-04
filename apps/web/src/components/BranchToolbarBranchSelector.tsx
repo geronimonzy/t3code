@@ -32,7 +32,7 @@ import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
-import { useProject, useQuietThreadShell } from "../state/entities";
+import { useProject, useQuietThreadShell, useQuietThreadShells } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "../state/threads";
@@ -45,6 +45,7 @@ import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
+  ownedWorktreePaths,
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
@@ -155,6 +156,8 @@ export function BranchToolbarBranchSelector({
     ? null
     : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
+  const threadShells = useQuietThreadShells();
+  const ownedWorktrees = ownedWorktreePaths(threadShells, environmentId);
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
   const hasServerThread = serverThread !== null;
   const canUpdateThreadBranch = !hasServerThread || canOperateThread;
@@ -629,6 +632,7 @@ export function BranchToolbarBranchSelector({
       <BranchPickerRefItem
         branch={refName}
         projectCwd={activeProjectCwd}
+        ownedWorktreePaths={ownedWorktrees}
         index={index}
         value={itemValue}
         disabled={

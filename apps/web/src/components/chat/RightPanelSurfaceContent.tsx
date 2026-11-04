@@ -9,6 +9,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { isAbsolutePath } from "@t3tools/shared/path";
 import { lazy, Suspense } from "react";
 import SideChatPane from "./SideChatPane";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
@@ -19,6 +20,7 @@ import {
   PersistentThreadTerminalPanel,
   type PersistentThreadTerminalPanelProps,
 } from "../PersistentThreadTerminals";
+import { hostPathParent } from "../files/filePreviewMode";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
@@ -199,15 +201,25 @@ export function RightPanelSurfaceContent(props: {
     case "file": {
       const files = props.files;
       const attachment = surface.kind === "file" ? surface.attachment : undefined;
-      if (!attachment && (files.projectName === null || !files.workspaceRoot)) return null;
+      // A thread without a project can still open a host file or folder from chat;
+      // its parent folder stands in for the workspace root the files panel reads from.
+      const hostFileRoot =
+        !files.workspaceRoot &&
+        surface.kind === "file" &&
+        !attachment &&
+        isAbsolutePath(surface.relativePath)
+          ? hostPathParent(surface.relativePath)
+          : null;
+      if (!attachment && !hostFileRoot && (files.projectName === null || !files.workspaceRoot)) {
+        return null;
+      }
+      const cwd = files.workspaceRoot ?? hostFileRoot ?? "";
       return (
         <Suspense fallback={null}>
           <FilePreviewPanel
-            key={`${props.environmentId}:${
-              attachment ? `attachment:${attachment.id}` : files.workspaceRoot
-            }`}
+            key={`${props.environmentId}:${attachment ? `attachment:${attachment.id}` : cwd}`}
             environmentId={props.environmentId}
-            cwd={files.workspaceRoot ?? ""}
+            cwd={cwd}
             projectName={files.projectName ?? ""}
             threadRef={threadRef}
             composerDraftTarget={props.composerDraftTarget}

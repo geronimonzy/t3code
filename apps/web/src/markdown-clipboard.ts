@@ -274,6 +274,7 @@ function serializeNode(node: Node, inTableCell = false): string {
 
 interface SoleCodeBlockScan {
   pre: Element | null;
+  code: Element | null;
   other: boolean;
 }
 
@@ -298,8 +299,13 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
     }
     if (isSkippedElement(element)) continue;
     if (element.tagName === "PRE") {
-      if (scan.pre) scan.other = true;
+      if (scan.pre || scan.code) scan.other = true;
       else scan.pre = element;
+      continue;
+    }
+    if (element.tagName === "CODE") {
+      if (scan.pre || scan.code) scan.other = true;
+      else scan.code = element;
       continue;
     }
     if (element.tagName === "IMG" || element.tagName === "HR") {
@@ -317,10 +323,11 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
 }
 
 // Selecting a block's final newline pulls in its closing pre even when only code was highlighted.
-function soleCodeBlock(container: Node): Element | null {
-  const scan: SoleCodeBlockScan = { pre: null, other: false };
+// A lone inline code span also copies plain, so a highlighted command pastes into a terminal as-is.
+function soleCode(container: Node): Element | null {
+  const scan: SoleCodeBlockScan = { pre: null, code: null, other: false };
   scanForSoleCodeBlock(container, scan);
-  return scan.other ? null : scan.pre;
+  return scan.other ? null : (scan.pre ?? scan.code);
 }
 
 function tidyMarkdown(markdown: string): string {
@@ -330,8 +337,8 @@ function tidyMarkdown(markdown: string): string {
 }
 
 export function serializeRenderedMarkdownFragment(container: Node): string {
-  const codeBlock = soleCodeBlock(container);
-  if (codeBlock) return (codeBlock.textContent ?? "").replace(/\n$/, "");
+  const code = soleCode(container);
+  if (code) return (code.textContent ?? "").replace(/\n$/, "");
   return tidyMarkdown(serializeChildren(container));
 }
 

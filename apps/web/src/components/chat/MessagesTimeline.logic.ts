@@ -2256,6 +2256,68 @@ export function timelineTurnFoldRunIdsByEntryId(
   return byEntryId;
 }
 
+/** The next thing to do to bring a work entry into view, expanded. */
+export type WorkEntryRevealStep =
+  | { readonly kind: "missing" }
+  | { readonly kind: "expand-run"; readonly runId: RunId }
+  | { readonly kind: "expand-attempt"; readonly attemptId: RunAttemptId }
+  | { readonly kind: "expand-group"; readonly groupId: string }
+  | { readonly kind: "scroll"; readonly rowIndex: number };
+
+/**
+ * Resolves one step toward showing a work entry: open the turn, superseded
+ * attempt, or tool group that hides it, then scroll to the row that renders it.
+ * Callers apply the step and resolve again against the new rows.
+ */
+export function resolveWorkEntryReveal(input: {
+  readonly entryId: string;
+  readonly timelineEntries: ReadonlyArray<TimelineEntry>;
+  readonly rows: ReadonlyArray<MessagesTimelineRow>;
+  readonly foldRunIds: ReadonlyMap<string, RunId>;
+}): WorkEntryRevealStep {
+  const { entryId, timelineEntries, rows } = input;
+  const entryIndex = timelineEntries.findIndex(
+    (entry) => entry.kind === "work" && entry.id === entryId,
+  );
+  if (entryIndex < 0) return { kind: "missing" };
+  const holds = (entries: ReadonlyArray<WorkLogEntry>) =>
+    entries.some((entry) => entry.id === entryId);
+  const rowIndex = rows.findIndex((row) => row.kind === "work" && holds(row.groupedEntries));
+  if (rowIndex >= 0) return { kind: "scroll", rowIndex };
+  const liveRow = rows.find((row) => row.kind === "work-live" && holds(row.groupedEntries));
+  if (liveRow?.kind === "work-live" && !liveRow.expanded) {
+    return { kind: "expand-group", groupId: liveRow.groupId };
+  }
+  const runId = input.foldRunIds.get(entryId);
+  const turnFold =
+    runId === undefined
+      ? undefined
+      : rows.find((row) => row.kind === "turn-fold" && row.runId === runId);
+  if (turnFold?.kind === "turn-fold" && !turnFold.expanded) {
+    return { kind: "expand-run", runId: turnFold.runId };
+  }
+  const attemptId = timelineEntries[entryIndex]?.attempt?.id;
+  const attemptFold = rows.find(
+    (row) => row.kind === "attempt-fold" && row.attemptId === attemptId,
+  );
+  if (attemptFold?.kind === "attempt-fold" && !attemptFold.expanded) {
+    return { kind: "expand-attempt", attemptId: attemptFold.attemptId };
+  }
+  // A collapsed group is anchored at its first entry, and groups are runs of
+  // adjacent work entries, so the nearest collapsed anchor at or before the
+  // entry owns it.
+  const collapsedGroupIds = new Set(
+    rows.flatMap((row) => (row.kind === "work-toggle" && !row.expanded ? [row.groupId] : [])),
+  );
+  for (let index = entryIndex; index >= 0; index -= 1) {
+    const entry = timelineEntries[index];
+    if (entry?.kind !== "work") break;
+    const groupId = workGroupId(entry.id);
+    if (collapsedGroupIds.has(groupId)) return { kind: "expand-group", groupId };
+  }
+  return { kind: "missing" };
+}
+
 function sameCheckpointSummaries(
   previous: MessagesTimelineRowsInput["turnDiffSummaries"],
   next: MessagesTimelineRowsInput["turnDiffSummaries"],

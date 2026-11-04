@@ -80,6 +80,7 @@ function RestoreBranchHarness(props: {
     isWorking: false,
     pendingBackgroundTasks: [{ taskId: "background-command", kind: "command" }] as never,
     turnItems: [],
+    onRevealToolCall: () => undefined,
     activePendingApproval: null as never,
     activePendingUserInput: null as never,
     gitStatusQuery: { refresh: props.refreshGitStatus },

@@ -162,8 +162,10 @@ export function backgroundWorkNowItem(input: {
   readonly stopping: boolean;
   readonly onStop: () => Promise<void>;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  /** Jumps to the tool call that started a monitor. */
+  readonly onRevealToolCall: (toolCallItemId: string) => void;
 }): ThreadNowItem | null {
-  const { onOpenThread } = input;
+  const { onOpenThread, onRevealToolCall } = input;
   const presentation = presentPendingBackgroundWork(input.tasks);
   if (presentation === null) return null;
   const rows = presentation.items.map((task) => {
@@ -196,6 +198,7 @@ export function backgroundWorkNowItem(input: {
     .toSorted((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
   const isCommand = (row: (typeof rows)[number]) => row.task.kind !== "subagent";
   const onlyThreadId = only?.childThreadId;
+  const onlyToolCallItemId = onlyThreadId === undefined ? only?.task.toolCallItemId : undefined;
   const startedAtMs = only?.startedAtMs ?? null;
   return {
     id: `background-work:${input.threadId}`,
@@ -215,12 +218,25 @@ export function backgroundWorkNowItem(input: {
         {newest.label}: {newest.activity}
       </>
     ) : (
-      rows.map((row, index) => (
-        <Fragment key={row.task.taskId}>
-          {index > 0 ? ", " : null}
-          {row.label}
-        </Fragment>
-      ))
+      rows.map((row, index) => {
+        const toolCallItemId = row.task.toolCallItemId;
+        return (
+          <Fragment key={row.task.taskId}>
+            {index > 0 ? ", " : null}
+            {toolCallItemId === undefined ? (
+              row.label
+            ) : (
+              <InlineButton
+                tone="muted"
+                aria-label={`Show the tool call for monitor ${row.task.label}`}
+                onClick={() => onRevealToolCall(toolCallItemId)}
+              >
+                {row.label}
+              </InlineButton>
+            )}
+          </Fragment>
+        );
+      })
     ),
     actions: (
       <>
@@ -236,6 +252,15 @@ export function backgroundWorkNowItem(input: {
         {onlyThreadId === undefined ? null : (
           <InlineButton tone="muted" onClick={() => onOpenThread(onlyThreadId)}>
             Open
+          </InlineButton>
+        )}
+        {onlyToolCallItemId === undefined ? null : (
+          <InlineButton
+            tone="muted"
+            aria-label={`Show the tool call for monitor ${only?.task.label}`}
+            onClick={() => onRevealToolCall(onlyToolCallItemId)}
+          >
+            Show
           </InlineButton>
         )}
         <InlineButton disabled={input.stopDisabled} onClick={() => void input.onStop()}>

@@ -37,6 +37,7 @@ import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
 import { useMascotsPreference } from "../../mascot/mascotPreferences";
+import { useActionTerminalLocation } from "../../lib/actionTerminalLocation";
 import { MascotAnimationPicker } from "./MascotAnimationPicker";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
@@ -100,6 +101,7 @@ export function AppearanceSettingsPanel() {
   const customThemes = useCustomThemes();
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const [subagentMascots, setSubagentMascots] = useMascotsPreference();
+  const [actionTerminalLocation, setActionTerminalLocation] = useActionTerminalLocation();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const environmentStageLabel = useEnvironmentStageLabel();
@@ -322,6 +324,39 @@ export function AppearanceSettingsPanel() {
                   <SelectItem value="comfortable">Comfortable (default)</SelectItem>
                   <SelectItem value="wide">Wide</SelectItem>
                   <SelectItem value="full">Full</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("action-terminal-location")}
+          description="Where project actions open their terminal on this device."
+          resetAction={
+            actionTerminalLocation !== "drawer" ? (
+              <SettingResetButton
+                label="action terminals"
+                onClick={() => setActionTerminalLocation("drawer")}
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={actionTerminalLocation}
+                onValueChange={(value) => {
+                  if (value === "drawer" || value === "right-panel")
+                    setActionTerminalLocation(value);
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Action terminals">
+                  <SelectValue>
+                    {actionTerminalLocation === "drawer" ? "Bottom" : "Right panel"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="drawer">Bottom (default)</SelectItem>
+                  <SelectItem value="right-panel">Right panel</SelectItem>
                 </SelectPopup>
               </Select>
             </div>

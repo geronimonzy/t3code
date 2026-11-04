@@ -6,6 +6,7 @@ import type { Dispatch } from "react";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { selectThreadTerminalUiState } from "../../terminalUiStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { useIsCompactEmbed } from "../../embedMode";
 import { useThreadTerminalActions } from "../terminal/useThreadTerminalActions";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
@@ -33,7 +34,14 @@ import { openUrlInPreview } from "../../browser/openFileInPreview";
 import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { confirmTerminalClose } from "../../lib/terminalCloseConfirm";
-import { findReusableProjectScriptTerminal } from "../../lib/projectScriptTerminal";
+import {
+  findReusablePanelScriptTerminal,
+  findReusableProjectScriptTerminal,
+} from "../../lib/projectScriptTerminal";
+import {
+  type ActionTerminalLocation,
+  useActionTerminalLocation,
+} from "../../lib/actionTerminalLocation";
 import { type TerminalContextSelection } from "../../lib/terminalContext";
 import {
   focusActiveDrawerTerminal,
@@ -118,6 +126,8 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const storeNewTerminal = useTerminalUiStateStore((s) => s.newTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
   const terminalActions = useThreadTerminalActions(activeThreadRef);
+  const [actionTerminalLocation] = useActionTerminalLocation();
+  const compactEmbed = useIsCompactEmbed();
 
   const activeTerminalGroup =
     terminalUiState.terminalGroups.find(
@@ -207,6 +217,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       preferNewTerminal?: boolean;
       rememberAsLastInvoked?: boolean;
       shellHistory?: "preserve" | "suppress";
+      location?: ActionTerminalLocation;
     },
   ) => {
     if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread) return;
@@ -217,10 +228,30 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       });
     }
     const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
-    const reusableTerminalId =
-      options?.preferNewTerminal ||
-      !canReuseTerminal ||
-      !readEnvironmentScope(environmentId, AuthTerminalReadScope)
+    // Compact embed hides side panels, so actions fall back to the drawer there.
+    const inRightPanel =
+      !compactEmbed && (options?.location ?? actionTerminalLocation) === "right-panel";
+    const mayReuse =
+      !options?.preferNewTerminal &&
+      canReuseTerminal &&
+      readEnvironmentScope(environmentId, AuthTerminalReadScope);
+    const panelState = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      activeThreadRef,
+    );
+    const reusablePanelTerminal =
+      inRightPanel && mayReuse
+        ? findReusablePanelScriptTerminal({
+            surfaces: panelState.surfaces.flatMap((surface) =>
+              surface.kind === "terminal" ? [surface] : [],
+            ),
+            activeSurfaceId: panelState.activeSurfaceId,
+            runningTerminalIds,
+          })
+        : null;
+    const reusableTerminalId = inRightPanel
+      ? (reusablePanelTerminal?.terminalId ?? null)
+      : !mayReuse
         ? null
         : findReusableProjectScriptTerminal({
             // Server sessions cover drawer terminals this client has not opened yet, such as a
@@ -246,10 +277,17 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     const launched = terminalActions.launchTerminal({
       // The drawer opens with the target already placed: opening it empty would claim
       // DEFAULT_THREAD_TERMINAL_ID, which a right-panel terminal may already own.
-      place: (terminalId) =>
-        reusableTerminalId === null
-          ? storeNewTerminal(activeThreadRef, terminalId)
-          : storeEnsureTerminal(activeThreadRef, terminalId, { open: true }),
+      place: (terminalId) => {
+        if (!inRightPanel) {
+          return reusableTerminalId === null
+            ? storeNewTerminal(activeThreadRef, terminalId)
+            : storeEnsureTerminal(activeThreadRef, terminalId, { open: true });
+        }
+        const panel = useRightPanelStore.getState();
+        if (reusablePanelTerminal === null) return panel.openTerminal(activeThreadRef, terminalId);
+        panel.activateTerminal(activeThreadRef, reusablePanelTerminal.surfaceId, terminalId);
+        panel.show(activeThreadRef);
+      },
       ...(reusableTerminalId === null
         ? { size: { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS } }
         : { terminalId: reusableTerminalId }),
@@ -317,7 +355,8 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         icon: "play",
         runOnWorktreeCreate: false,
       },
-      { rememberAsLastInvoked: false, shellHistory: "preserve" },
+      // Chat code blocks keep the drawer; the location setting covers project actions only.
+      { rememberAsLastInvoked: false, shellHistory: "preserve", location: "drawer" },
     );
   };
   const runShellCommandStable = useStableCallback(runShellCommand);

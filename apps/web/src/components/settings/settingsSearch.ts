@@ -336,6 +336,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "action-terminal-location",
+    title: "Action terminals",
+    to: "/settings/appearance",
+    searchTerms: ["project actions scripts run terminal drawer bottom right panel side tab"],
+  },
+  {
     id: "thread-details-items",
     title: "Thread details",
     to: "/settings/appearance",

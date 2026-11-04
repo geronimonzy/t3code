@@ -16,3 +16,28 @@ export function findReusableProjectScriptTerminal(input: {
   if (idleDrawerTerminalIds.includes(input.activeTerminalId)) return input.activeTerminalId;
   return idleDrawerTerminalIds[0] ?? null;
 }
+
+/**
+ * With actions set to open in the right panel, they reuse an idle panel terminal: the active
+ * tab's active terminal first, then any other. Returns the tab that holds it so it can be shown.
+ */
+export function findReusablePanelScriptTerminal(input: {
+  readonly surfaces: ReadonlyArray<{
+    readonly id: string;
+    readonly terminalIds: ReadonlyArray<string>;
+    readonly activeTerminalId: string;
+  }>;
+  readonly activeSurfaceId: string | null;
+  readonly runningTerminalIds: ReadonlyArray<string>;
+}): { readonly surfaceId: string; readonly terminalId: string } | null {
+  const isIdle = (terminalId: string) => !input.runningTerminalIds.includes(terminalId);
+  const active = input.surfaces.find((surface) => surface.id === input.activeSurfaceId);
+  if (active && isIdle(active.activeTerminalId)) {
+    return { surfaceId: active.id, terminalId: active.activeTerminalId };
+  }
+  for (const surface of input.surfaces) {
+    const terminalId = surface.terminalIds.find(isIdle);
+    if (terminalId !== undefined) return { surfaceId: surface.id, terminalId };
+  }
+  return null;
+}

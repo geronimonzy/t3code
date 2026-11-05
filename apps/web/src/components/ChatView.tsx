@@ -3970,7 +3970,6 @@ export default function ChatView(props: ChatViewProps) {
                         );
                     }}
                     onRevealItem={revealToolCall}
-                    onClose={() => setPlanCardOpen(false)}
                   />
                 ) : null}
 

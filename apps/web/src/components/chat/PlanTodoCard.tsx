@@ -10,7 +10,7 @@ import {
   CircleDashedIcon,
   CircleIcon,
   RefreshCwIcon,
-  XIcon,
+  ChevronUpIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -30,6 +30,7 @@ import { parseTodoFile, todoMemoryPath } from "./todoFile.logic";
 
 const PlanCardTab = Schema.Literals(["plan", "todo"]);
 const PLAN_CARD_TAB_KEY = "t3code:plan-card-tab";
+const PLAN_CARD_COLLAPSED_KEY = "t3code:plan-card-collapsed";
 export const PLAN_CARD_OPEN_KEY = "t3code:plan-card-open";
 // The timeline minimap's ticks reach 36px from the chat's left edge (TimelineMinimap: left-3, w-6);
 // the card starts past them instead of mirroring the details card's inset exactly.
@@ -207,9 +208,10 @@ export function PlanTodoCard(props: {
   threadBusy: boolean;
   onRefreshTodo: () => void;
   onRevealItem: (itemId: string) => void;
-  onClose: () => void;
 }) {
   const [tab, setTab] = useLocalStorage(PLAN_CARD_TAB_KEY, "plan", PlanCardTab);
+  // Collapsed keeps a small floating header; the toolbar toggle is what closes the card.
+  const [collapsed, setCollapsed] = useLocalStorage(PLAN_CARD_COLLAPSED_KEY, false, Schema.Boolean);
   const todoAtom =
     props.workspaceRoot === null
       ? NO_TODO_FILE
@@ -246,7 +248,9 @@ export function PlanTodoCard(props: {
       data-plan-todo-card
     >
       <div className="dropdown-glass isolate contain-paint grid max-h-full grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-2xl">
-        <div className="flex items-center justify-between gap-2 px-3 pt-3">
+        <div
+          className={cn("flex items-center justify-between gap-2 px-3 pt-3", collapsed && "pb-3")}
+        >
           <ToggleGroup
             aria-label="Plan card tab"
             value={[tab]}
@@ -261,26 +265,29 @@ export function PlanTodoCard(props: {
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Close plan card"
-            onClick={props.onClose}
+            aria-label={collapsed ? "Expand plan card" : "Collapse plan card"}
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed((value) => !value)}
           >
-            <XIcon />
+            {collapsed ? <ChevronDownIcon /> : <ChevronUpIcon />}
           </Button>
         </div>
-        <ScrollArea scrollFade className="min-h-0">
-          <div className="p-3">
-            {tab === "plan" ? (
-              <PlanTab turnItems={props.turnItems} onRevealItem={props.onRevealItem} />
-            ) : (
-              <TodoTab
-                result={todoResult}
-                environmentId={props.environmentId}
-                workspaceRoot={props.workspaceRoot}
-                onRefresh={props.onRefreshTodo}
-              />
-            )}
-          </div>
-        </ScrollArea>
+        {collapsed ? null : (
+          <ScrollArea scrollFade className="min-h-0">
+            <div className="p-3">
+              {tab === "plan" ? (
+                <PlanTab turnItems={props.turnItems} onRevealItem={props.onRevealItem} />
+              ) : (
+                <TodoTab
+                  result={todoResult}
+                  environmentId={props.environmentId}
+                  workspaceRoot={props.workspaceRoot}
+                  onRefresh={props.onRefreshTodo}
+                />
+              )}
+            </div>
+          </ScrollArea>
+        )}
       </div>
     </aside>
   );

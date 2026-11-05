@@ -2315,6 +2315,17 @@ code {
   max-width: calc(var(--timeline-row-width) - 2rem);
 }
 
+/* A table in the user's own message stays inside its bubble and scrolls there. */
+.messages-timeline-row-frame
+  [data-user-message-body]
+  .chat-markdown
+  .chat-markdown-table-container {
+  left: auto;
+  translate: none;
+  width: auto;
+  max-width: 100%;
+}
+
 /* Caps a long path, URL, or chip at 24rem; text past the cap wraps. */
 .chat-markdown :is(th, td) {
   max-width: 24rem;

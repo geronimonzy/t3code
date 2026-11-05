@@ -1,4 +1,4 @@
-import { PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
+import { ListChecksIcon, PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
 import { Maximize2, Minimize2 } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { memo, type ReactNode } from "react";
@@ -28,6 +28,9 @@ export interface PanelLayoutControlsProps {
   onToggleTerminal: () => void;
   onToggleThreadPanel: () => void;
   onToggleRightPanel: () => void;
+  /** The plan and todo card's toggle; absent where the card isn't offered. */
+  planCardOpen?: boolean;
+  onTogglePlanCard?: (() => void) | undefined;
 }
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
@@ -48,6 +51,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   onToggleTerminal,
   onToggleThreadPanel,
   onToggleRightPanel,
+  planCardOpen = false,
+  onTogglePlanCard,
 }: PanelLayoutControlsProps) {
   const threadPanelToggle = (
     <Toggle
@@ -82,6 +87,23 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
+      {onTogglePlanCard ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="flex shrink-0" />}>
+            <Toggle
+              className="shrink-0 [-webkit-app-region:no-drag]"
+              pressed={planCardOpen}
+              onPressedChange={onTogglePlanCard}
+              aria-label="Toggle plan card"
+              variant="ghost"
+              size="sm"
+            >
+              <ListChecksIcon className="size-4" />
+            </Toggle>
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">Plan and todo</TooltipPopup>
+        </Tooltip>
+      ) : null}
       {showThreadPanelControl ? threadPanelControl : null}
       {showTerminalControl ? (
         <Tooltip>

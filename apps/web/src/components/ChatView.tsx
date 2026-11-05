@@ -291,6 +291,8 @@ import {
 } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
+import { PLAN_CARD_OPEN_KEY, PlanTodoCard } from "./chat/PlanTodoCard";
+import { TODO_REFRESH_PROMPT } from "./chat/todoFile.logic";
 import { deriveThreadUsageSummary } from "./chat/ThreadUsageSection.logic";
 import { ComposerSubagentStrip, useComposerSubagentStrip } from "./chat/ComposerSubagentStrip";
 import { useMascotsPreference } from "../mascot/mascotPreferences";
@@ -1693,6 +1695,11 @@ export default function ChatView(props: ChatViewProps) {
     resumeCompactionPermanentlyDismissed,
     setResumeCompactionPermanentlyDismissed,
   ]);
+  const [planCardOpen, setPlanCardOpen] = useLocalStorage(
+    PLAN_CARD_OPEN_KEY,
+    false,
+    Schema.Boolean,
+  );
   const [dismissedFallbackWindow, setDismissedFallbackWindow] = useLocalStorage(
     `t3code:fallback-notice-dismissed:${environmentId}`,
     null,
@@ -3285,6 +3292,8 @@ export default function ChatView(props: ChatViewProps) {
     onToggleTerminal: toggleTerminalVisibilityStable,
     onToggleThreadPanel: toggleThreadPanelStable,
     onToggleRightPanel: toggleRightPanelStable,
+    planCardOpen,
+    onTogglePlanCard: compactEmbed ? undefined : () => setPlanCardOpen((open) => !open),
   } satisfies PanelLayoutControlsProps;
   const panelToggleControls = (
     <PanelLayoutControls
@@ -3946,6 +3955,23 @@ export default function ChatView(props: ChatViewProps) {
                   }}
                   threadUsage={threadUsage}
                 />
+
+                {planCardOpen && !compactEmbed ? (
+                  <PlanTodoCard
+                    environmentId={activeThread.environmentId}
+                    workspaceRoot={activeProject?.workspaceRoot ?? null}
+                    turnItems={serverVisibleTurnItems ?? []}
+                    threadBusy={isWorking}
+                    onRefreshTodo={() =>
+                      void sendStandaloneCommand(
+                        TODO_REFRESH_PROMPT,
+                        "Failed to refresh the todo list.",
+                      )
+                    }
+                    onRevealItem={revealToolCall}
+                    onClose={() => setPlanCardOpen(false)}
+                  />
+                ) : null}
 
                 <PullRequestThreadDialogHost
                   threadKey={activeThreadKey}

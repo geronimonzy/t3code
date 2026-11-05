@@ -8,7 +8,11 @@ export interface PlanCardPlan {
   readonly itemId: string;
   readonly title: string;
   readonly updatedAt: string;
-  readonly steps: ReadonlyArray<{ readonly text: string; readonly status: PlanCardStepStatus }>;
+  readonly steps: ReadonlyArray<{
+    readonly id: string;
+    readonly text: string;
+    readonly status: PlanCardStepStatus;
+  }>;
   readonly done: number;
   readonly total: number;
 }
@@ -31,7 +35,7 @@ export function derivePlanCard(turnItems: ReadonlyArray<ThreadStructureVisibleTu
   const plans: PlanCardPlan[] = [];
   for (const { item } of turnItems) {
     if (item.type !== "todo_list" || item.steps.length === 0) continue;
-    const steps = item.steps.map(({ text, status }) => ({ text, status }));
+    const steps = item.steps.map(({ id, text, status }) => ({ id, text, status }));
     const plan: PlanCardPlan = {
       itemId: item.id,
       title: steps[0]!.text,

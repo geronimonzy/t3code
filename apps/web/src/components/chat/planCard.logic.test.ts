@@ -54,7 +54,7 @@ describe("derivePlanCard", () => {
     expect(earlier).toEqual([]);
   });
 
-  it("keeps a list whose statuses changed as a separate entry", () => {
+  it("treats a list whose statuses advanced as the same plan", () => {
     const { current, earlier } = derivePlanCard([
       todo("a", "2026-11-05T10:00:00Z", [
         ["One", "running"],
@@ -63,6 +63,18 @@ describe("derivePlanCard", () => {
       todo("b", "2026-11-05T10:05:00Z", [
         ["One", "completed"],
         ["Two", "running"],
+      ]),
+    ]);
+    expect(current).toMatchObject({ itemId: "b", done: 1 });
+    expect(earlier).toEqual([]);
+  });
+
+  it("starts a new entry when the steps change", () => {
+    const { current, earlier } = derivePlanCard([
+      todo("a", "2026-11-05T10:00:00Z", [["One", "completed"]]),
+      todo("b", "2026-11-05T10:05:00Z", [
+        ["One", "completed"],
+        ["Two", "pending"],
       ]),
     ]);
     expect(current?.itemId).toBe("b");

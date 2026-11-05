@@ -17,16 +17,15 @@ export interface PlanCardPlan {
   readonly total: number;
 }
 
-const sameSteps = (left: PlanCardPlan, right: PlanCardPlan) =>
+// One plan as long as its steps keep their texts; statuses advancing doesn't start a new one.
+const samePlan = (left: PlanCardPlan, right: PlanCardPlan) =>
   left.steps.length === right.steps.length &&
-  left.steps.every(
-    (step, index) =>
-      step.text === right.steps[index]?.text && step.status === right.steps[index]?.status,
-  );
+  left.steps.every((step, index) => step.text === right.steps[index]?.text);
 
 /**
  * The plan card's checklists for one thread: the newest as `current`, older ones newest first.
- * Claude's task tools re-emit the same list every turn, so identical consecutive copies count once.
+ * Each checklist update is its own turn item, so consecutive copies with the same steps count once,
+ * as the newest copy.
  */
 export function derivePlanCard(turnItems: ReadonlyArray<ThreadStructureVisibleTurnItem>): {
   readonly current: PlanCardPlan | null;
@@ -46,7 +45,7 @@ export function derivePlanCard(turnItems: ReadonlyArray<ThreadStructureVisibleTu
     };
     const previous = plans.at(-1);
     // A repeat replaces the earlier copy, so the entry jumps to the newest one.
-    if (previous !== undefined && sameSteps(previous, plan)) plans[plans.length - 1] = plan;
+    if (previous !== undefined && samePlan(previous, plan)) plans[plans.length - 1] = plan;
     else plans.push(plan);
   }
   return { current: plans.at(-1) ?? null, earlier: plans.slice(0, -1).toReversed() };

@@ -240,7 +240,7 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
 const ContextUsageTool = Tool.make("t3_context_usage", {
   ...commandTool,
   description:
-    "How full this thread's context window is: tokens used, the limit, and the percent. Cheap; call it before big reads or long tasks.",
+    "How full this thread's context window is: tokens used, the limit, and the percent. Cheap; call it before big reads or long tasks. In a Claude subagent this is the parent thread's window, not yours.",
   parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
   success: Schema.Struct({
     usedTokens: Schema.NullOr(NonNegativeInt),

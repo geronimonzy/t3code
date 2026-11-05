@@ -224,14 +224,17 @@ export function PlanTodoCard(props: {
 }) {
   const [tab, setTab] = useLocalStorage(PLAN_CARD_TAB_KEY, "plan", PlanCardTab);
   const placement = useChatCanvas()?.detailsCardPlacement ?? null;
+  // Without room for an inline details card there is no free side to mirror it on, and an
+  // overlay would cover the chat; the toggle stays pressed and the card returns with the room.
+  if (placement === null) return null;
   return (
     <aside
       className="absolute z-20"
       style={{
-        left: placement?.right ?? 12,
-        top: placement?.y ?? 12,
-        width: placement?.width ?? 320,
-        maxHeight: placement?.height ?? "calc(100% - 24px)",
+        left: placement.right,
+        top: placement.y,
+        width: placement.width,
+        maxHeight: placement.height,
       }}
       data-plan-todo-card
     >

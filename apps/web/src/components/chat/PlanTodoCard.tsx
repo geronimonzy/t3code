@@ -31,6 +31,9 @@ import { parseTodoFile, todoMemoryPath } from "./todoFile.logic";
 const PlanCardTab = Schema.Literals(["plan", "todo"]);
 const PLAN_CARD_TAB_KEY = "t3code:plan-card-tab";
 export const PLAN_CARD_OPEN_KEY = "t3code:plan-card-open";
+// The timeline minimap's ticks reach 36px from the chat's left edge (TimelineMinimap: left-3, w-6);
+// the card starts past them instead of mirroring the details card's inset exactly.
+const MINIMAP_CLEARANCE_PX = 44;
 const NO_TODO_FILE = Atom.make(AsyncResult.initial<ProjectReadFileResult, never>(false));
 
 function StepIcon({ status }: { status: PlanCardStepStatus }) {
@@ -235,7 +238,7 @@ export function PlanTodoCard(props: {
     <aside
       className="absolute z-20"
       style={{
-        left: placement.right,
+        left: Math.max(placement.right, MINIMAP_CLEARANCE_PX),
         top: placement.y,
         width: placement.width,
         maxHeight: placement.height,

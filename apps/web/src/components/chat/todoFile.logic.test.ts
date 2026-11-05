@@ -4,13 +4,10 @@ import { parseTodoFile, todoMemoryPath, todoRefreshPrompt } from "./todoFile.log
 
 describe("todoMemoryPath", () => {
   it.each([
-    ["/home/kiril/claudeStuff/t3code", "-home-kiril-claudeStuff-t3code"],
-    ["/home/kiril/qwen-v4.1-flash", "-home-kiril-qwen-v4-1-flash"],
-    ["/home/kiril/.t3/scratch", "-home-kiril--t3-scratch"],
-    [
-      "/home/kiril/receiptRecognition/ReMa Receipt Manager App",
-      "-home-kiril-receiptRecognition-ReMa-Receipt-Manager-App",
-    ],
+    ["/home/dev/projects/t3code", "-home-dev-projects-t3code"],
+    ["/home/dev/model-v2.1-beta", "-home-dev-model-v2-1-beta"],
+    ["/home/dev/.t3/scratch", "-home-dev--t3-scratch"],
+    ["/home/dev/apps/My Sample App", "-home-dev-apps-My-Sample-App"],
   ])("slugs like Claude Code: %s", (workspaceRoot, slug) => {
     expect(todoMemoryPath(workspaceRoot)).toBe(`~/.claude/projects/${slug}/memory/todo.md`);
   });
@@ -43,8 +40,8 @@ describe("parseTodoFile", () => {
 
 describe("todoRefreshPrompt", () => {
   it("names the file the tab reads, so the skill writes exactly there", () => {
-    expect(todoRefreshPrompt("/home/kiril/claudeStuff/t3code-rebase-20261104/apps/server")).toBe(
-      "check what we have selected to do (list file: ~/.claude/projects/-home-kiril-claudeStuff-t3code-rebase-20261104-apps-server/memory/todo.md)",
+    expect(todoRefreshPrompt("/home/dev/projects/t3code-wt/apps/server")).toBe(
+      "check what we have selected to do (list file: ~/.claude/projects/-home-dev-projects-t3code-wt-apps-server/memory/todo.md)",
     );
   });
 });

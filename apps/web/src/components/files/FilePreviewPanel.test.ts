@@ -115,8 +115,8 @@ describe("resolveFilePreviewPath", () => {
 
 describe("hostPathParent", () => {
   it("finds the folder holding a host path", () => {
-    expect(hostPathParent("/home/kiril/claudeStuff")).toBe("/home/kiril");
-    expect(hostPathParent("/home/kiril/claudeStuff/")).toBe("/home/kiril");
+    expect(hostPathParent("/home/dev/projects")).toBe("/home/dev");
+    expect(hostPathParent("/home/dev/projects/")).toBe("/home/dev");
     expect(hostPathParent("/home")).toBe("/");
     expect(hostPathParent("C:\\Users")).toBe("C:\\");
   });

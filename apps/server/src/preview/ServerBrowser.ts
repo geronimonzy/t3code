@@ -805,8 +805,8 @@ const make = Effect.gen(function* () {
         ? await connectDesktop(snapshot)
         : null;
     if (desktop) opened.push(desktop.close);
-    // Otherwise a desktop that attaches late shows its own page, and the agent drives another.
-    if (!desktop && desktopChannel.available) {
+    // Otherwise a late or channel-less desktop draws its own page, and the agent drives another.
+    if (!desktop) {
       await runPromise(
         manager
           .markHeadless({ threadId: ThreadId.make(snapshot.threadId), tabId: snapshot.tabId })

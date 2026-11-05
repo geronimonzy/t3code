@@ -237,7 +237,24 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const ContextUsageTool = Tool.make("t3_context_usage", {
+  ...commandTool,
+  description:
+    "How full this thread's context window is: tokens used, the limit, and the percent. Cheap; call it before big reads or long tasks.",
+  parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
+  success: Schema.Struct({
+    usedTokens: Schema.NullOr(NonNegativeInt),
+    maxTokens: Schema.NullOr(NonNegativeInt),
+    percentUsed: Schema.NullOr(NonNegativeInt),
+    updatedAt: Schema.NullOr(Schema.String),
+    summary: Schema.String,
+  }),
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
 export const ThreadToolkit = Toolkit.make(
+  ContextUsageTool,
   ScheduledTaskRunTool,
   ThreadSearchTool,
   ThreadConfigureTool,

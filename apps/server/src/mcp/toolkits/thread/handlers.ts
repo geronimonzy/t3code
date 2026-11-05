@@ -1,3 +1,4 @@
+import { latestContextUsage } from "./contextUsage.ts";
 import {
   type CommandId,
   type RuntimeRequestId,
@@ -121,6 +122,12 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         runCount: task.runCount,
         nextRunAt: task.nextRunAt,
       };
+    }),
+  ),
+  t3_context_usage: McpToolAccess.reads(() =>
+    Effect.gen(function* () {
+      const { projection } = yield* readThread(undefined, ["providerTurns"]);
+      return latestContextUsage(projection.providerTurns);
     }),
   ),
   t3_thread_search: McpToolAccess.reads((input) =>

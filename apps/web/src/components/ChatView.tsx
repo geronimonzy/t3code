@@ -292,7 +292,7 @@ import {
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
 import { PLAN_CARD_OPEN_KEY, PlanTodoCard } from "./chat/PlanTodoCard";
-import { TODO_REFRESH_PROMPT } from "./chat/todoFile.logic";
+import { todoRefreshPrompt } from "./chat/todoFile.logic";
 import { deriveThreadUsageSummary } from "./chat/ThreadUsageSection.logic";
 import { ComposerSubagentStrip, useComposerSubagentStrip } from "./chat/ComposerSubagentStrip";
 import { useMascotsPreference } from "../mascot/mascotPreferences";
@@ -3962,12 +3962,13 @@ export default function ChatView(props: ChatViewProps) {
                     workspaceRoot={activeProject?.workspaceRoot ?? null}
                     turnItems={serverVisibleTurnItems ?? []}
                     threadBusy={isWorking}
-                    onRefreshTodo={() =>
-                      void sendStandaloneCommand(
-                        TODO_REFRESH_PROMPT,
-                        "Failed to refresh the todo list.",
-                      )
-                    }
+                    onRefreshTodo={() => {
+                      if (activeProject)
+                        void sendStandaloneCommand(
+                          todoRefreshPrompt(activeProject.workspaceRoot),
+                          "Failed to refresh the todo list.",
+                        );
+                    }}
                     onRevealItem={revealToolCall}
                     onClose={() => setPlanCardOpen(false)}
                   />

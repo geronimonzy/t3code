@@ -1,6 +1,6 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/models";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import {
@@ -15,6 +15,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useNowMinute } from "~/hooks/useNowMinute";
 import { cn } from "~/lib/utils";
 import { projectEnvironment } from "~/state/projects";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -30,7 +31,7 @@ import { parseTodoFile, todoMemoryPath } from "./todoFile.logic";
 const PlanCardTab = Schema.Literals(["plan", "todo"]);
 const PLAN_CARD_TAB_KEY = "t3code:plan-card-tab";
 export const PLAN_CARD_OPEN_KEY = "t3code:plan-card-open";
-const NO_TODO_FILE = Atom.make(AsyncResult.initial<never, never>(false));
+const NO_TODO_FILE = Atom.make(AsyncResult.initial<ProjectReadFileResult, never>(false));
 
 function StepIcon({ status }: { status: PlanCardStepStatus }) {
   if (status === "completed")
@@ -151,52 +152,35 @@ function PlanTab({
 }
 
 function TodoTab({
-  environmentId,
+  result,
   workspaceRoot,
-  threadBusy,
+  environmentId,
   onRefresh,
 }: {
-  environmentId: EnvironmentId;
+  result: AsyncResult.AsyncResult<ProjectReadFileResult, unknown>;
   workspaceRoot: string | null;
-  threadBusy: boolean;
+  environmentId: EnvironmentId;
   onRefresh: () => void;
 }) {
-  const atom =
-    workspaceRoot === null
-      ? NO_TODO_FILE
-      : projectEnvironment.readFile({
-          environmentId,
-          input: {
-            cwd: workspaceRoot,
-            relativePath: todoMemoryPath(workspaceRoot),
-            allowMissing: true,
-          },
-        });
-  const result = useAtomValue(atom);
-  const reread = useAtomRefresh(atom);
-  // Re-read when the thread's turn ends: that is when the skill has written the file.
-  const wasBusy = useRef(threadBusy);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads the todo file on the server when the thread's turn ends
-  useEffect(() => {
-    if (wasBusy.current && !threadBusy) reread();
-    wasBusy.current = threadBusy;
-  }, [threadBusy, reread]);
+  // Ticks once a minute, so "Updated 3 min ago" stays true while the card is open.
+  const nowMinute = useNowMinute();
   const file = AsyncResult.getOrElse(result, () => null);
   const todo = file === null ? null : parseTodoFile(file.contents, file.exists !== false);
+  const updatedLabel = todo?.updatedAt
+    ? `Updated ${formatRelativeTimeLabel(todo.updatedAt, Date.parse(`${nowMinute}:00Z`))}`
+    : "Not gathered yet";
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground">
-          {todo?.updatedAt
-            ? `Updated ${formatRelativeTimeLabel(todo.updatedAt)}`
-            : "Not gathered yet"}
-        </span>
+        <span className="text-xs text-muted-foreground">{updatedLabel}</span>
         <Button size="xs" variant="ghost" onClick={onRefresh} disabled={workspaceRoot === null}>
           <RefreshCwIcon />
           Refresh
         </Button>
       </div>
-      {todo === null || todo.empty ? (
+      {AsyncResult.isFailure(result) ? (
+        <p className="text-sm text-muted-foreground">Couldn't read the todo list.</p>
+      ) : todo === null || todo.empty ? (
         <p className="text-sm text-muted-foreground">No items planned.</p>
       ) : (
         <ChatMarkdown
@@ -223,6 +207,26 @@ export function PlanTodoCard(props: {
   onClose: () => void;
 }) {
   const [tab, setTab] = useLocalStorage(PLAN_CARD_TAB_KEY, "plan", PlanCardTab);
+  const todoAtom =
+    props.workspaceRoot === null
+      ? NO_TODO_FILE
+      : projectEnvironment.readFile({
+          environmentId: props.environmentId,
+          input: {
+            cwd: props.workspaceRoot,
+            relativePath: todoMemoryPath(props.workspaceRoot),
+            allowMissing: true,
+          },
+        });
+  const todoResult = useAtomValue(todoAtom);
+  const rereadTodo = useAtomRefresh(todoAtom);
+  // Re-read when the thread's turn ends, whichever tab is showing: that is when the skill wrote it.
+  const wasBusy = useRef(props.threadBusy);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads the todo file on the server when the thread's turn ends
+  useEffect(() => {
+    if (wasBusy.current && !props.threadBusy) rereadTodo();
+    wasBusy.current = props.threadBusy;
+  }, [props.threadBusy, rereadTodo]);
   const placement = useChatCanvas()?.detailsCardPlacement ?? null;
   // Without room for an inline details card there is no free side to mirror it on, and an
   // overlay would cover the chat; the toggle stays pressed and the card returns with the room.
@@ -266,9 +270,9 @@ export function PlanTodoCard(props: {
               <PlanTab turnItems={props.turnItems} onRevealItem={props.onRevealItem} />
             ) : (
               <TodoTab
+                result={todoResult}
                 environmentId={props.environmentId}
                 workspaceRoot={props.workspaceRoot}
-                threadBusy={props.threadBusy}
                 onRefresh={props.onRefreshTodo}
               />
             )}

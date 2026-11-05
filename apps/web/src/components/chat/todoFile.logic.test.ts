@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseTodoFile, todoMemoryPath } from "./todoFile.logic";
+import { parseTodoFile, todoMemoryPath, todoRefreshPrompt } from "./todoFile.logic";
 
 describe("todoMemoryPath", () => {
   it.each([
@@ -38,5 +38,13 @@ describe("parseTodoFile", () => {
       body: "- [ ] A",
       empty: false,
     });
+  });
+});
+
+describe("todoRefreshPrompt", () => {
+  it("names the file the tab reads, so the skill writes exactly there", () => {
+    expect(todoRefreshPrompt("/home/kiril/claudeStuff/t3code-rebase-20261104/apps/server")).toBe(
+      "check what we have selected to do (list file: ~/.claude/projects/-home-kiril-claudeStuff-t3code-rebase-20261104-apps-server/memory/todo.md)",
+    );
   });
 });

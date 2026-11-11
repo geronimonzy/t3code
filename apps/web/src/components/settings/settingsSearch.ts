@@ -344,6 +344,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "action-terminal-location",
+    title: "Action terminals",
+    to: "/settings/appearance",
+    searchTerms: ["project actions scripts run terminal drawer bottom right panel side tab"],
+  },
+  {
     id: "thread-details-items",
     title: "Thread details",
     to: "/settings/appearance",
@@ -422,6 +428,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "composer-context",
     title: "Composer context",
     to: "/settings/appearance",
+  },
+  {
+    id: "subagent-mascots",
+    title: "Agent mascots",
+    to: "/settings/appearance",
+    searchTerms: ["claude pixel subagents strip composer sidebar fun"],
+  },
+  {
+    id: "mascot-animations",
+    title: "Claude mascot",
+    to: "/settings/appearance",
+    searchTerms: ["idle input working done animation pixel claude theme preset samurai"],
+  },
+  {
+    id: "codex-mascot-animations",
+    title: "Codex mascot",
+    to: "/settings/appearance",
+    searchTerms: ["idle input working done animation pixel codex openai theme preset ninja"],
   },
   {
     id: "project-grouping",

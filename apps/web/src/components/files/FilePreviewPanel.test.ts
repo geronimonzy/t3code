@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
+  hostPathParent,
   isMarkdownPreviewFile,
   resolveFilePreviewPath,
   shouldShowFileExplorer,
@@ -93,6 +94,15 @@ describe("resolveFilePreviewPath", () => {
         shouldShowFileExplorer({ relativePath, explorerOpen: false, attachmentOpen: false }),
       ).toBe(true);
     }
+  });
+});
+
+describe("hostPathParent", () => {
+  it("finds the folder holding a host path", () => {
+    expect(hostPathParent("/home/dev/projects")).toBe("/home/dev");
+    expect(hostPathParent("/home/dev/projects/")).toBe("/home/dev");
+    expect(hostPathParent("/home")).toBe("/");
+    expect(hostPathParent("C:\\Users")).toBe("C:\\");
   });
 });
 

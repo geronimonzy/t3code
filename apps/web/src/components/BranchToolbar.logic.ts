@@ -246,6 +246,28 @@ export function resolveLocalCheckoutBranchMismatch(input: {
   return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
 }
 
+/** Worktree folders that a live thread works in, so the rest read as unclaimed. */
+export function ownedWorktreePaths(
+  threads: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly worktreePath: string | null;
+    readonly archivedAt: unknown;
+  }>,
+  environmentId: string,
+): ReadonlySet<string> {
+  const owned = new Set<string>();
+  for (const thread of threads) {
+    if (
+      thread.environmentId === environmentId &&
+      thread.archivedAt === null &&
+      thread.worktreePath
+    ) {
+      owned.add(thread.worktreePath);
+    }
+  }
+  return owned;
+}
+
 export function resolveBranchSelectionTarget(input: {
   activeProjectCwd: string;
   activeProjectCheckoutRoot?: string | undefined;

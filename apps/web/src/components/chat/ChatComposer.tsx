@@ -65,6 +65,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
 import {
@@ -371,6 +372,8 @@ export interface ChatComposerProps {
   isPreparingWorktree: boolean;
   isCompacting: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
+  /** Live subagent activity, shown as its own row so no notice can cover it. */
+  subagentStrip?: ReactNode;
   resumeCompactionTokens: number | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
@@ -3260,6 +3263,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
           <ComposerBannerStack items={shelfItems} />
+          {props.subagentStrip ? (
+            <ComposerBanner.Attachment>
+              <ComposerBanner.Root density="comfortable" data-chat-composer-subagent-strip="true">
+                {props.subagentStrip}
+              </ComposerBanner.Root>
+            </ComposerBanner.Attachment>
+          ) : null}
           {showComposerTopDrawer ? (
             <ComposerBanner.Attachment>
               <ComposerBanner.Root data-chat-composer-top-drawer="true" variant="info">

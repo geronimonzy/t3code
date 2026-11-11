@@ -36,6 +36,9 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
+import { useMascotsPreference } from "../../mascot/mascotPreferences";
+import { useActionTerminalLocation } from "../../lib/actionTerminalLocation";
+import { MascotAnimationPicker } from "./MascotAnimationPicker";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -97,6 +100,8 @@ export function AppearanceSettingsPanel() {
   } = useTheme();
   const customThemes = useCustomThemes();
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
+  const [subagentMascots, setSubagentMascots] = useMascotsPreference();
+  const [actionTerminalLocation, setActionTerminalLocation] = useActionTerminalLocation();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const environmentStageLabel = useEnvironmentStageLabel();
@@ -258,6 +263,41 @@ export function AppearanceSettingsPanel() {
         />
 
         <SettingsRow
+          {...searchableSetting("subagent-mascots")}
+          description="Show agent status as tiny pixel Claudes: thread rows, subagents in the sidebar, and the strip above the composer."
+          resetAction={
+            !subagentMascots ? (
+              <SettingResetButton
+                label="subagent mascots"
+                onClick={() => setSubagentMascots(true)}
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={subagentMascots}
+              onCheckedChange={(checked) => setSubagentMascots(Boolean(checked))}
+              aria-label="Show agents as pixel mascots"
+            />
+          }
+        />
+
+        {subagentMascots ? (
+          <>
+            <SettingsRow
+              {...searchableSetting("mascot-animations")}
+              description="Claude's animation for each state. Click a preview to replay it."
+              control={<MascotAnimationPicker character="claude" />}
+            />
+            <SettingsRow
+              {...searchableSetting("codex-mascot-animations")}
+              description="Codex's animation for each state. Click a preview to replay it."
+              control={<MascotAnimationPicker character="codex" />}
+            />
+          </>
+        ) : null}
+
+        <SettingsRow
           {...searchableSetting("chat-width")}
           description="Set how wide messages and the composer can grow on large screens."
           resetAction={
@@ -284,6 +324,39 @@ export function AppearanceSettingsPanel() {
                   <SelectItem value="comfortable">Comfortable (default)</SelectItem>
                   <SelectItem value="wide">Wide</SelectItem>
                   <SelectItem value="full">Full</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("action-terminal-location")}
+          description="Where project actions open their terminal on this device."
+          resetAction={
+            actionTerminalLocation !== "drawer" ? (
+              <SettingResetButton
+                label="action terminals"
+                onClick={() => setActionTerminalLocation("drawer")}
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={actionTerminalLocation}
+                onValueChange={(value) => {
+                  if (value === "drawer" || value === "right-panel")
+                    setActionTerminalLocation(value);
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Action terminals">
+                  <SelectValue>
+                    {actionTerminalLocation === "drawer" ? "Bottom" : "Right panel"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="drawer">Bottom (default)</SelectItem>
+                  <SelectItem value="right-panel">Right panel</SelectItem>
                 </SelectPopup>
               </Select>
             </div>

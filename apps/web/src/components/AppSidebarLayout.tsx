@@ -12,6 +12,7 @@ import { useLocation, useRouter, type AnyRouter } from "@tanstack/react-router";
 import { moveWorkspaceFocus, workspaceAreaProps } from "../lib/workspaceFocus";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
+import { syncEmbedModeFromSearch, useIsCompactEmbed } from "../embedMode";
 import {
   releaseThreadUndoShortcut,
   threadUndoClaimsShortcut,
@@ -420,6 +421,14 @@ export function AppSidebarLayout({
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const pathname = useLocation({ select: (location) => location.pathname });
+  const searchStr = useLocation({ select: (location) => location.searchStr });
+  // Compact embed shows the thread alone, like a route that opts out of the sidebar.
+  const compactEmbed = useIsCompactEmbed();
+  const sidebarShown = showSidebar && !compactEmbed;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- copies the ?embed= query into the module-level embed-mode store that outlives this route
+  useEffect(() => {
+    syncEmbedModeFromSearch(searchStr);
+  }, [searchStr]);
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
@@ -460,7 +469,7 @@ export function AppSidebarLayout({
         storageKey="chat_thread_sidebar_open"
         style={sidebarProviderStyle}
       >
-        {showSidebar ? (
+        {sidebarShown ? (
           <>
             <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
             <Sidebar
@@ -488,7 +497,7 @@ export function AppSidebarLayout({
         ) : null}
         {children}
         <BackgroundThreadAnnouncer />
-        <SidebarControl showSidebar={showSidebar} />
+        <SidebarControl showSidebar={sidebarShown} />
         {isElectron ? <HistorySwipeNavigation /> : null}
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>

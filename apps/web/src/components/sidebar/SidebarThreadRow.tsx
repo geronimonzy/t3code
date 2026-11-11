@@ -92,6 +92,8 @@ import {
   useRetainedValue,
   useSidebarRowSubscriptionLease,
   setFileDragActive,
+  sidebarThreadMascotState,
+  type SidebarSubagentRow,
 } from "../Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
@@ -120,6 +122,9 @@ import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger }
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
+import { SidebarSubagentRows } from "../SidebarSubagentRows";
+import { Mascot } from "../../mascot/Mascot";
+import { mascotCharacterForDriver } from "../../mascot/mascotAnimations";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -543,6 +548,10 @@ function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: 
 
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
+  /** Live subagents nested under this row. */
+  subagentRows: ReadonlyArray<SidebarSubagentRow>;
+  /** Pixel mascots for this row's status and its subagents. */
+  subagentMascots: boolean;
   // "folder" is a one-line row inside a boring sidebar project folder;
   // "folder-multiline" adds the card's branch and PR line under it.
   variant: "card" | "slim" | "folder" | "folder-multiline";
@@ -797,6 +806,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         }
                       : null;
   const isWokeStatus = topStatus?.icon === "woke";
+  const threadMascotState = sidebarThreadMascotState(status, topStatus?.icon ?? null);
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
@@ -808,6 +818,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const modelInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
+  const mascotCharacterFor = (instanceId: string) =>
+    mascotCharacterForDriver(props.providerEntryByInstanceId.get(instanceId)?.driverKind);
   const showInstanceBadge =
     providerEntry !== null &&
     shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId.values());
@@ -1403,6 +1415,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
+        <SidebarSubagentRows
+          rows={props.subagentRows}
+          mascots={props.subagentMascots}
+          mascotCharacterFor={mascotCharacterFor}
+          onActivate={onThreadActivate}
+        />
       </li>
     );
   }
@@ -1510,7 +1528,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             topStatus.className,
                           )}
                         >
-                          <TopStatusIcon icon={topStatus.icon} className="size-4" />
+                          {props.subagentMascots && threadMascotState !== null ? (
+                            <Mascot
+                              state={threadMascotState}
+                              character={mascotCharacterForDriver(providerEntry?.driverKind)}
+                              className="h-4"
+                            />
+                          ) : (
+                            <TopStatusIcon icon={topStatus.icon} className="size-4" />
+                          )}
                           {/* Not a live region: a collapsed sidebar is inert, so
                             BackgroundThreadAnnouncer and the open thread's
                             timeline speak status changes instead. */}
@@ -1605,6 +1631,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
+      <SidebarSubagentRows
+        rows={props.subagentRows}
+        mascots={props.subagentMascots}
+        mascotCharacterFor={mascotCharacterFor}
+        onActivate={onThreadActivate}
+      />
     </li>
   );
 });

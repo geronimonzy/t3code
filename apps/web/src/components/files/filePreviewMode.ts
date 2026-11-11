@@ -40,6 +40,17 @@ export function shouldShowFileExplorer(input: {
   return input.explorerOpen || input.relativePath === null;
 }
 
+/** The folder holding a host path, or the path itself when it is a root. */
+export function hostPathParent(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (index < 0) return path;
+  if (index === 0) return trimmed.slice(0, 1);
+  const parent = trimmed.slice(0, index);
+  // "C:" alone is the drive's current folder, not its root.
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
+}
+
 /**
  * The server only signs `workspace-file` assets below the workspace root, so a
  * file opened from outside it, such as an absolute link in the thread, goes

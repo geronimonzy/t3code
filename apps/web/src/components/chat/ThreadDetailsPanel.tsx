@@ -39,6 +39,8 @@ import {
   THREAD_DETAILS_PANEL_LABEL_CLASS,
 } from "./threadDetailsPanelStyles";
 import { Menu, MenuPopup } from "../ui/menu";
+import { ThreadUsageSection } from "./ThreadUsageSection";
+import type { ThreadUsageSummary } from "./ThreadUsageSection.logic";
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
@@ -84,6 +86,8 @@ interface ThreadDetailsPanelProps extends Pick<
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
   usage: ThreadDetailsUsageInput;
+  /** Last-turn tokens, a subagent's run totals, and cost; its context feeds the Context row. */
+  threadUsage: ThreadUsageSummary;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
@@ -263,6 +267,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               {visible.context && props.usage.contextWindow ? (
                 <ThreadDetailsContext usage={props.usage.contextWindow} />
               ) : null}
+
+              {visible.tokens ? <ThreadUsageSection usage={props.threadUsage} /> : null}
 
               {/* Shown only when no section above has content, so an emptied card can be refilled. */}
               <div className="p-2 group-has-[>section>:last-child:not(:empty)]/details-items:hidden">

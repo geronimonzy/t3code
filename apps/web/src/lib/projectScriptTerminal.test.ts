@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { findReusableProjectScriptTerminal } from "./projectScriptTerminal";
+import {
+  findReusablePanelScriptTerminal,
+  findReusableProjectScriptTerminal,
+} from "./projectScriptTerminal";
 
 describe("findReusableProjectScriptTerminal", () => {
   it.each([
@@ -40,5 +43,41 @@ describe("findReusableProjectScriptTerminal", () => {
     expect(
       findReusableProjectScriptTerminal({ ...input, panelTerminalIds: new Set(panelTerminalIds) }),
     ).toBe(expected);
+  });
+});
+
+describe("findReusablePanelScriptTerminal", () => {
+  const surfaces = [
+    { id: "terminal:a", terminalIds: ["a", "a2"], activeTerminalId: "a" },
+    { id: "terminal:b", terminalIds: ["b"], activeTerminalId: "b" },
+  ];
+
+  it.each([
+    {
+      name: "reuses the active tab's active terminal when idle",
+      activeSurfaceId: "terminal:b",
+      runningTerminalIds: [],
+      expected: { surfaceId: "terminal:b", terminalId: "b" },
+    },
+    {
+      name: "falls back to another idle panel terminal when the active one is busy",
+      activeSurfaceId: "terminal:a",
+      runningTerminalIds: ["a"],
+      expected: { surfaceId: "terminal:a", terminalId: "a2" },
+    },
+    {
+      name: "ignores a non-terminal active tab",
+      activeSurfaceId: "diff",
+      runningTerminalIds: ["a"],
+      expected: { surfaceId: "terminal:a", terminalId: "a2" },
+    },
+    {
+      name: "finds nothing when every panel terminal is busy",
+      activeSurfaceId: "terminal:a",
+      runningTerminalIds: ["a", "a2", "b"],
+      expected: null,
+    },
+  ])("$name", ({ expected, ...input }) => {
+    expect(findReusablePanelScriptTerminal({ surfaces, ...input })).toEqual(expected);
   });
 });

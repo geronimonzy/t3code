@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
+  commandPaletteWorktreeTargets,
   newThreadNoProjectIndex,
   buildNestedSearchItems,
   resolveCommandPaletteProject,
@@ -959,5 +960,25 @@ describe("newThreadNoProjectIndex", () => {
   it("keeps a pinned or current scratch project in its own place", () => {
     expect(newThreadNoProjectIndex([entry(false, true, true), entry()])).toBe(0);
     expect(newThreadNoProjectIndex([entry(true), entry(true, false, true), entry()])).toBe(1);
+  });
+});
+
+describe("commandPaletteWorktreeTargets", () => {
+  it("lists the project's other worktrees, those without a thread first", () => {
+    const targets = commandPaletteWorktreeTargets(
+      [
+        { name: "main", worktreePath: "/repo" },
+        { name: "feature", worktreePath: "/repo-feature" },
+        { name: "probe", worktreePath: "/repo/.claude/worktrees/probe" },
+        { name: "origin/feature", isRemote: true, worktreePath: null },
+        { name: "stale", worktreePath: null },
+      ],
+      "/repo",
+      new Set(["/repo-feature"]),
+    );
+    expect(targets).toEqual([
+      { branch: "probe", worktreePath: "/repo/.claude/worktrees/probe", hasThread: false },
+      { branch: "feature", worktreePath: "/repo-feature", hasThread: true },
+    ]);
   });
 });

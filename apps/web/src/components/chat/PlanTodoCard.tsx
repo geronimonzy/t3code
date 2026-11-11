@@ -247,7 +247,11 @@ export function PlanTodoCard(props: {
       }}
       data-plan-todo-card
     >
-      <div className="dropdown-glass isolate contain-paint grid max-h-full grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-2xl">
+      {/* The limit sits on the grid itself: a percentage of the aside's max-height resolves to none. */}
+      <div
+        className="dropdown-glass isolate contain-paint grid grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-2xl"
+        style={{ maxHeight: placement.height }}
+      >
         <div
           className={cn("flex items-center justify-between gap-2 px-3 pt-3", collapsed && "pb-3")}
         >

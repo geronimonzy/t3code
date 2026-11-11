@@ -437,16 +437,26 @@ export function shouldPublishShellApplicationEvent(
   );
 }
 
-/** Shell updates refetch an aggregate; drop transcript bodies before retaining an event. */
+/**
+ * Shell updates refetch an aggregate; drop transcript bodies before retaining an event.
+ * A subagent update refetches its child thread, whose shell mirrors the record; the parent
+ * shell does not read subagent records. Refreshing both would need two deltas at one
+ * sequence, and clients drop the second.
+ */
 export function toShellApplicationEvent(stored: ApplicationStoredEvent): ShellApplicationEvent {
-  return "aggregateKind" in stored
-    ? {
-        aggregateKind: stored.aggregateKind,
-        aggregateId: stored.aggregateId,
-        type: stored.type,
-        sequence: stored.sequence,
-      }
-    : { sequence: stored.sequence, event: { threadId: stored.event.threadId } };
+  if ("aggregateKind" in stored) {
+    return {
+      aggregateKind: stored.aggregateKind,
+      aggregateId: stored.aggregateId,
+      type: stored.type,
+      sequence: stored.sequence,
+    };
+  }
+  const threadId =
+    stored.event.type === "subagent.updated" && stored.event.payload.childThreadId !== null
+      ? stored.event.payload.childThreadId
+      : stored.event.threadId;
+  return { sequence: stored.sequence, event: { threadId } };
 }
 
 export function coalesceShellApplicationEvents<A extends ShellApplicationEvent>(

@@ -27,6 +27,7 @@ import {
   shellStreamItemsFromInitialSnapshot,
   shouldPublishShellApplicationEvent,
   skipUnchangedThreadShells,
+  toShellApplicationEvent,
 } from "./ShellStream.ts";
 
 const emptyShellSnapshot = {
@@ -77,6 +78,30 @@ describe("subagent shell events", () => {
       shouldPublishShellApplicationEvent(stored("new-child", "thread.deleted"), subagents),
     ).toBe(true);
     expect(subagents.has("new-child")).toBe(true);
+  });
+});
+
+describe("toShellApplicationEvent", () => {
+  it("refreshes a subagent's child thread, whose shell mirrors the subagent status", () => {
+    const subagentUpdate = (childThreadId: string | null) =>
+      ({
+        sequence: 9,
+        event: {
+          type: "subagent.updated",
+          threadId: "thread-parent",
+          payload: { childThreadId },
+        },
+      }) as unknown as ApplicationStoredEvent;
+
+    expect(toShellApplicationEvent(subagentUpdate("thread-child"))).toEqual({
+      sequence: 9,
+      event: { threadId: "thread-child" },
+    });
+    // Subagents without a child thread still refresh the parent.
+    expect(toShellApplicationEvent(subagentUpdate(null))).toEqual({
+      sequence: 9,
+      event: { threadId: "thread-parent" },
+    });
   });
 });
 

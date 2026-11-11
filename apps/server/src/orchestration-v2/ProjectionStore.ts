@@ -37,6 +37,7 @@ import type {
   OrchestrationV2Run,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
+  OrchestrationV2SubagentStatus,
   OrchestrationV2ThreadShellSnapshot,
   OrchestrationV2ShellThreadStatus,
   OrchestrationV2ThreadShell,
@@ -65,6 +66,8 @@ import {
   OrchestrationV2RunJson as OrchestrationV2RunJsonSchema,
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
+  OrchestrationV2SubagentStatus as OrchestrationV2SubagentStatusSchema,
+  OrchestrationV2SubagentUsage as OrchestrationV2SubagentUsageSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
   RunId,
@@ -90,6 +93,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
@@ -1027,6 +1031,11 @@ export type AgentAwarenessThread = ProjectThreadAwarenessV2Input["thread"] &
     | "hasActionableProposedPlan"
   >;
 
+const isSubagentStatus = Schema.is(OrchestrationV2SubagentStatusSchema);
+const decodeSubagentUsageJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(OrchestrationV2SubagentUsageSchema),
+);
+
 type ShellThreadRow = {
   readonly thread_id: string;
   readonly payload_json: string;
@@ -1057,6 +1066,8 @@ type ShellThreadRow = {
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
+  readonly subagent_status: string | null;
+  readonly subagent_usage_json: string | null;
 };
 
 type ShellRunRow = {
@@ -1819,6 +1830,8 @@ type ShellThreadState = {
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly goal: OrchestrationV2ThreadShell["goal"];
+  readonly subagentStatus: OrchestrationV2SubagentStatus | null;
+  readonly subagentUsage: OrchestrationV2ThreadShell["subagentUsage"];
   readonly itemCount: number;
   readonly runlessItemCount: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
@@ -1970,6 +1983,10 @@ function shellFromState(input: {
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
     status: input.state.latestRunStatus,
+    ...(input.state.subagentStatus === null ? {} : { subagentStatus: input.state.subagentStatus }),
+    ...(input.state.subagentUsage === undefined
+      ? {}
+      : { subagentUsage: input.state.subagentUsage }),
     lastError: input.state.lastError,
     lastErrorClass: input.state.lastErrorClass,
     lastErrorCode: input.state.lastErrorCode,
@@ -6494,7 +6511,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE plan.thread_id = t.thread_id
                   AND plan.kind = 'proposed_plan'
                   AND plan.status = 'active'
-              ) AS has_actionable_proposed_plan
+              ) AS has_actionable_proposed_plan,
+              -- A subagent's child thread has no runs; its live status is the
+              -- parent's subagent record (child_thread_id index).
+              (
+                SELECT subagent.status
+                FROM orchestration_v2_projection_subagents subagent
+                WHERE subagent.child_thread_id = t.thread_id
+                ORDER BY subagent.updated_at DESC, subagent.subagent_id DESC
+                LIMIT 1
+              ) AS subagent_status,
+              (
+                SELECT json_extract(subagent.payload_json, '$.usage')
+                FROM orchestration_v2_projection_subagents subagent
+                WHERE subagent.child_thread_id = t.thread_id
+                ORDER BY subagent.updated_at DESC, subagent.subagent_id DESC
+                LIMIT 1
+              ) AS subagent_usage_json
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs active ON active.run_id = (
               SELECT r.run_id
@@ -7095,6 +7128,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             providerThreadsByThreadId.get(thread.id) ?? [],
             thread.activeProviderThreadId,
           ),
+          subagentStatus: isSubagentStatus(row.subagent_status) ? row.subagent_status : null,
+          subagentUsage:
+            row.subagent_usage_json === null
+              ? undefined
+              : Option.getOrUndefined(decodeSubagentUsageJson(row.subagent_usage_json)),
           itemCount: shellItemCountsByThreadId.get(thread.id)?.itemCount ?? 0,
           runlessItemCount: shellItemCountsByThreadId.get(thread.id)?.runlessItemCount ?? 0,
           updatedAt: thread.updatedAt,

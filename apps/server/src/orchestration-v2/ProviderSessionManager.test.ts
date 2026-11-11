@@ -46,6 +46,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -659,6 +660,7 @@ function layerTest(input: {
         layerConfiguredEventSink,
         IdAllocator.layer,
         layerTestStores,
+        ProjectStore.layer.pipe(Layer.provide(layerTestDatabase)),
         ThreadCommandExecutor.layer,
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           resolveBranchName: () => Effect.succeed(null),

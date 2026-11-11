@@ -414,6 +414,8 @@ export function routeProviderEvent(
         (event.providerThread.appThreadId !== null && ownsThread(event.providerThread.appThreadId));
       return belongs ? [true, addProviderThread(event.providerThread.id)] : [false, state];
     }
+    case "provider_thread.workspace_moved":
+      return [event.threadId === input.threadId, state];
     case "provider_turn.updated": {
       const isRoot = event.providerTurn.runAttemptId === input.attemptId;
       const belongs =
@@ -478,7 +480,7 @@ export function routeProviderEvent(
       ) {
         return [belongs, adopted];
       }
-      const workflowMemberParents = new Map(state.workflowMemberParents);
+      const workflowMemberParents = new Map(adopted.workflowMemberParents);
       for (const member of coordinator.workflow.agents) {
         if (member.childThreadId !== undefined) {
           workflowMemberParents.set(member.childThreadId, coordinator.childThreadId);
